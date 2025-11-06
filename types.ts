@@ -5,6 +5,7 @@ export enum GameState {
   EXPLORING = 'EXPLORING',
   COMBAT = 'COMBAT',
   GAME_OVER = 'GAME_OVER',
+  SOCIAL_ENCOUNTER = 'SOCIAL_ENCOUNTER',
 }
 
 export enum CharacterClass {
@@ -20,6 +21,8 @@ export enum ItemType {
 export enum EnemyAbility {
   HEAL = 'HEAL',
   SHIELD = 'SHIELD',
+  MULTI_ATTACK = 'MULTI_ATTACK',
+  DRAIN_LIFE = 'DRAIN_LIFE',
 }
 
 export interface Item {
@@ -37,6 +40,10 @@ export interface Player {
   portrait: string; // base64 encoded image
   hp: number;
   maxHp: number;
+  mp?: number; // Mana for Mages
+  maxMp?: number;
+  ep?: number; // Energy for Rogues
+  maxEp?: number;
   attack: number;
   level: number;
   xp: number;
@@ -58,8 +65,32 @@ export interface Enemy {
 
 export interface GameAction {
   label: string;
-  type: 'explore' | 'rest' | 'encounter';
+  type: 'explore' | 'rest' | 'encounter' | 'social';
 }
+
+// --- Social Encounter ---
+export enum RewardType {
+    XP = 'XP',
+    ITEM = 'ITEM',
+}
+
+export interface Reward {
+    type: RewardType;
+    value?: number; // for XP
+    item?: Omit<Item, 'quantity'>; // for item
+}
+
+export interface SocialChoice {
+    label: string;
+    outcome: string;
+    reward?: Reward;
+}
+
+export interface SocialEncounter {
+    description: string;
+    choices: SocialChoice[];
+}
+
 
 export interface SaveData {
     player: Player;
@@ -79,6 +110,7 @@ export interface AppState {
   actions: GameAction[];
   log: string[];
   isPlayerTurn: boolean;
+  socialEncounter: SocialEncounter | null;
 }
 
 export type Action =
@@ -91,6 +123,7 @@ export type Action =
   | { type: 'SET_ENEMIES'; payload: Enemy[] }
   | { type: 'PLAYER_ACTION_DEFEND' }
   | { type: 'PLAYER_ACTION_FLEE_FAILURE' }
+  | { type: 'PLAYER_ACTION_ABILITY'; payload: { abilityName: string; cost: number; targetIndex: number } }
   | { type: 'SET_PLAYER_TURN'; payload: boolean }
   | { type: 'UPDATE_ENEMY'; payload: { index: number; data: Partial<Enemy> } }
   | { type: 'UPDATE_PLAYER'; payload: Partial<Player> }
@@ -99,4 +132,7 @@ export type Action =
   | { type: 'COMBAT_VICTORY'; payload: { enemies: Enemy[] } }
   | { type: 'USE_ITEM'; payload: { inventoryIndex: number } }
   | { type: 'ENEMY_ACTION_HEAL'; payload: { enemyIndex: number; healAmount: number } }
-  | { type: 'ENEMY_ACTION_SHIELD'; payload: { enemyIndex: number } };
+  | { type: 'ENEMY_ACTION_DRAIN_LIFE', payload: { enemyIndex: number; damage: number } }
+  | { type: 'ENEMY_ACTION_SHIELD'; payload: { enemyIndex: number } }
+  | { type: 'SET_SOCIAL_ENCOUNTER'; payload: SocialEncounter }
+  | { type: 'RESOLVE_SOCIAL_CHOICE'; payload: { choice: SocialChoice } };

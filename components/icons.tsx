@@ -1,7 +1,9 @@
 import React from 'react';
 
-export const SwordIcon = ({ className = "w-6 h-6" }: { className?: string }) => (
+// Fix: Add title prop to SwordIcon
+export const SwordIcon = ({ className = "w-6 h-6", title }: { className?: string; title?: string }) => (
   <svg xmlns="http://www.w3.org/2000/svg" className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    {title && <title>{title}</title>}
     <path d="M14.5 17.5l-10-10" />
     <path d="M5 12.5l-1.5 1.5a2.83 2.83 0 0 0 4 4L9 16.5" />
     <path d="M16 3l5 5" />
@@ -69,5 +71,18 @@ export const SaveIcon = ({ className = "w-6 h-6" }: { className?: string }) => (
         <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
         <polyline points="17 21 17 13 7 13 7 21"></polyline>
         <polyline points="7 3 7 8 15 8"></polyline>
+    </svg>
+);
+
+export const FireIcon = ({ className = "w-6 h-6" }: { className?: string }) => (
+    <svg xmlns="http://www.w3.org/2000/svg" className={className} viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M12 2c-5.52 0-10 4.48-10 10s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm3.08 13.43c-.42.42-1.02.65-1.63.65-.63 0-1.23-.24-1.66-.68-.88-.88-.88-2.3 0-3.18.42-.42.98-.65 1.58-.65.62 0 1.2.24 1.63.68.88.88.88 2.3 0 3.18z"/>
+        <path d="M12 4c-4.41 0-8 3.59-8 8s3.59 8 8 8 8-3.59 8-8-3.59-8-8-8zm4.18 10.51c-.43.43-1.01.66-1.62.66-.63 0-1.24-.25-1.67-.69-.88-.88-.88-2.3 0-3.18.42-.42.99-.65 1.59-.65.63 0 1.22.25 1.65.68.88.88.88,2.3, 0, 3.18z" opacity=".3"/>
+    </svg>
+);
+
+export const BoltIcon = ({ className = "w-6 h-6" }: { className?: string }) => (
+    <svg xmlns="http://www.w3.org/2000/svg" className={className} viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>
     </svg>
 );

@@ -9,4 +9,5 @@ export const initialState: AppState = {
   actions: [],
   log: [],
   isPlayerTurn: true,
+  socialEncounter: null,
 };

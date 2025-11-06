@@ -1,5 +1,5 @@
 import { GoogleGenAI, Type, Modality } from "@google/genai";
-import { Player, Enemy, GameAction, Item, ItemType, EnemyAbility, CharacterClass } from '../types';
+import { Player, Enemy, GameAction, Item, ItemType, EnemyAbility, CharacterClass, SocialEncounter, RewardType } from '../types';
 
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY as string });
 
@@ -24,7 +24,7 @@ const sceneSchema = {
     },
     actions: {
       type: Type.ARRAY,
-      description: "An array of 3 possible actions for the player. One should be 'rest', one should be an 'encounter' (like 'Challenge the guardian'), and one should be 'explore'.",
+      description: "An array of 3 possible actions for the player. One should be 'rest', one should be an 'encounter' (like 'Challenge the guardian'), and one should be 'explore'. Occasionally, include a 'social' action type instead of explore or encounter.",
       items: {
         type: Type.OBJECT,
         properties: {
@@ -34,7 +34,7 @@ const sceneSchema = {
           },
           type: {
             type: Type.STRING,
-            description: "The type of action. Must be one of: 'explore', 'rest', 'encounter'.",
+            description: "The type of action. Must be one of: 'explore', 'rest', 'encounter', 'social'. Ensure a good mix of types.",
           },
         },
         required: ["label", "type"],
@@ -73,7 +73,7 @@ const enemySchema = {
         },
         ability: {
             type: Type.STRING,
-            description: `An optional special ability for the monster. Can be one of: '${EnemyAbility.HEAL}', '${EnemyAbility.SHIELD}'. Omit for most monsters.`
+            description: `An optional special ability for the monster. Can be one of: '${EnemyAbility.HEAL}', '${EnemyAbility.SHIELD}', '${EnemyAbility.MULTI_ATTACK}', '${EnemyAbility.DRAIN_LIFE}'. Omit for most monsters.`
         }
     },
     required: ["name", "description", "hp", "attack"]
@@ -85,12 +85,45 @@ const encounterSchema = {
     items: enemySchema,
 };
 
+const rewardSchema = {
+    type: Type.OBJECT,
+    properties: {
+        type: { type: Type.STRING, description: `The type of reward. Must be one of: '${RewardType.XP}', '${RewardType.ITEM}'.` },
+        value: { type: Type.INTEGER, description: "For XP, the amount gained. Between 25 and 75." },
+        item: { ...itemSchema, description: "For an ITEM reward, describe the item."}
+    },
+    required: ["type"]
+};
+
+const socialChoiceSchema = {
+    type: Type.OBJECT,
+    properties: {
+        label: { type: Type.STRING, description: "A short label for the choice button (e.g., 'Help the merchant', 'Ignore him'). Max 5 words." },
+        outcome: { type: Type.STRING, description: "The resulting story text if this choice is made. Max 60 words." },
+        reward: { ...rewardSchema, description: "An optional reward for this choice. Not every choice should have a reward." }
+    },
+    required: ["label", "outcome"]
+};
+
+const socialEncounterSchema = {
+    type: Type.OBJECT,
+    properties: {
+        description: { type: Type.STRING, description: "A description of a non-combat social situation with an NPC. e.g., meeting a lost child, a grumpy guard, a mysterious vendor. Max 80 words." },
+        choices: {
+            type: Type.ARRAY,
+            description: "An array of exactly 2 choices for the player.",
+            items: socialChoiceSchema
+        }
+    },
+    required: ["description", "choices"]
+};
+
 
 export const generateScene = async (player: Player): Promise<{ description: string; actions: GameAction[]; foundItem?: Omit<Item, 'quantity'>; }> => {
     try {
         const response = await ai.models.generateContent({
             model: "gemini-2.5-flash",
-            contents: `Generate a new scene for a JRPG player at level ${player.level}. The player just finished a battle or arrived in a new area.`,
+            contents: `Generate a new scene for a JRPG player at level ${player.level}. The player just finished a battle or arrived in a new area. Occasionally, include a social encounter.`,
             config: {
                 responseMimeType: "application/json",
                 responseSchema: sceneSchema,
@@ -102,7 +135,7 @@ export const generateScene = async (player: Player): Promise<{ description: stri
         // Ensure actions are unique and correct types
         const actionsMap = new Map<string, GameAction>();
         (data.actions as GameAction[]).forEach(action => {
-            if (['explore', 'rest', 'encounter'].includes(action.type)) {
+            if (['explore', 'rest', 'encounter', 'social'].includes(action.type)) {
                 if(!actionsMap.has(action.type)) {
                     actionsMap.set(action.type, action);
                 }
@@ -132,7 +165,7 @@ export const generateEncounter = async (player: Player): Promise<Enemy[]> => {
      try {
         const response = await ai.models.generateContent({
             model: "gemini-2.5-flash",
-            contents: `Generate a fantasy JRPG monster encounter for a player who is level ${player.level}. Generate between 1 and 3 monsters. Some might have special abilities like healing or shielding. The encounter should be a suitable challenge.`,
+            contents: `Generate a fantasy JRPG monster encounter for a player who is level ${player.level}. Generate between 1 and 3 monsters. Some might have special abilities like healing, shielding, multi-attack, or drain life. The encounter should be a suitable challenge.`,
             config: {
                 responseMimeType: "application/json",
                 responseSchema: encounterSchema,
@@ -158,6 +191,38 @@ export const generateEncounter = async (player: Player): Promise<Enemy[]> => {
             attack: attack,
             isShielded: false,
         }];
+    }
+};
+
+export const generateSocialEncounter = async (player: Player): Promise<SocialEncounter> => {
+    try {
+        const response = await ai.models.generateContent({
+            model: "gemini-2.5-flash",
+            contents: `Generate a social, non-combat encounter for a level ${player.level} ${player.class} in a JRPG. The situation should present a clear choice with two distinct outcomes. One choice might offer a small reward like XP or an item.`,
+            config: {
+                responseMimeType: "application/json",
+                responseSchema: socialEncounterSchema,
+                temperature: 1.0,
+            },
+        });
+        return JSON.parse(response.text) as SocialEncounter;
+    } catch (error) {
+        console.error("Error generating social encounter:", error);
+        // Fallback social encounter
+        return {
+            description: "You come across an old merchant whose cart has a broken wheel. He looks at you with weary eyes.",
+            choices: [
+                {
+                    label: "Help him fix the wheel.",
+                    outcome: "You spend some time helping the merchant. Grateful, he thanks you for your kindness.",
+                    reward: { type: RewardType.XP, value: 30 }
+                },
+                {
+                    label: "Ignore him and continue.",
+                    outcome: "You decide you don't have time to help and continue on your journey down the path."
+                }
+            ]
+        };
     }
 };
 

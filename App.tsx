@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef, useReducer } from 'react';
-import { GameState, Player, Enemy, GameAction, Item, ItemType, SaveData, CharacterClass } from './types';
-import { generateScene, generateEncounter } from './services/geminiService';
+import { GameState, Player, Enemy, GameAction, Item, ItemType, SaveData, CharacterClass, EnemyAbility, SocialChoice } from './types';
+import { generateScene, generateEncounter, generateSocialEncounter } from './services/geminiService';
 import { Inventory } from './components/Inventory';
 import { reducer } from './state/reducer';
 import { initialState } from './state/initialState';
@@ -10,19 +10,24 @@ import { LoadingScreen } from './components/views/LoadingScreen';
 import { GameOverScreen } from './components/views/GameOverScreen';
 import { ExploringView } from './components/views/ExploringView';
 import { CombatView } from './components/views/CombatView';
+import { SocialEncounterView } from './components/views/SocialEncounterView';
 import { StatusBar } from './components/StatusBar';
-import { HeartIcon, StarIcon, SaveIcon } from './components/icons';
+import { HeartIcon, StarIcon, SaveIcon, BoltIcon, FireIcon } from './components/icons';
 
 const SAVE_KEY = 'jrpgSaveDataV1';
+const CRIT_CHANCE = 0.1;
+const CRIT_MULTIPLIER = 1.5;
 
 const App: React.FC = () => {
     const [state, dispatch] = useReducer(reducer, initialState);
-    const { gameState, player, enemies, storyText, actions, log, isPlayerTurn } = state;
+    const { gameState, player, enemies, storyText, actions, log, isPlayerTurn, socialEncounter } = state;
 
     const [isInventoryOpen, setIsInventoryOpen] = useState(false);
     const [saveFileExists, setSaveFileExists] = useState(false);
-    const [isResolvingCombat, setIsResolvingCombat] = useState(false); // Fix for combat loop
+    const [isResolvingCombat, setIsResolvingCombat] = useState(false);
     const [isGeneratingPostCombatScene, setIsGeneratingPostCombatScene] = useState(false);
+    const [isGeneratingPostSocialScene, setIsGeneratingPostSocialScene] = useState(false);
+
     const logRef = useRef<HTMLDivElement>(null);
     const enemyTurnInProgress = useRef(false);
 
@@ -105,7 +110,11 @@ const App: React.FC = () => {
             dispatch({ type: 'SET_SCENE', payload: { description, actions } });
             if (foundItem) handleFoundItem(foundItem);
             dispatch({ type: 'SET_GAME_STATE', payload: GameState.EXPLORING });
-        } else {
+        } else if (action.type === 'social') {
+            const encounter = await generateSocialEncounter(player);
+            dispatch({ type: 'SET_SOCIAL_ENCOUNTER', payload: encounter });
+        }
+        else {
             const newEnemies = await generateEncounter(player);
             const enemyNames = newEnemies.map(e => e.name).join(', ');
             dispatch({ type: 'SET_ENEMIES', payload: newEnemies });
@@ -134,22 +143,31 @@ const App: React.FC = () => {
         }
     }, [player, appendToLog]);
 
-    const handleCombatAction = useCallback(async (action: 'attack' | 'defend' | 'flee', targetIndex?: number) => {
+    const handleCombatAction = useCallback(async (action: 'attack' | 'defend' | 'flee' | 'ability', payload?: any) => {
         if (!isPlayerTurn || enemies.length === 0) return;
         
         dispatch({ type: 'SET_PLAYER_TURN', payload: false });
         dispatch({ type: 'UPDATE_PLAYER', payload: { isDefending: false } });
 
-        if (action === 'attack' && targetIndex !== undefined) {
-            const target = enemies[targetIndex];
-            const damage = Math.floor(player.attack + (Math.random() * 5 - 2));
+        if (action === 'attack' && payload.targetIndex !== undefined) {
+            const target = enemies[payload.targetIndex];
+            const isCrit = Math.random() < CRIT_CHANCE;
+            let damage = Math.floor(player.attack + (Math.random() * 5 - 2));
+            if (isCrit) {
+                damage = Math.floor(damage * CRIT_MULTIPLIER);
+            }
             const damageTaken = target.isShielded ? Math.floor(damage / 2) : damage;
             const newHp = Math.max(0, target.hp - damageTaken);
-            dispatch({ type: 'UPDATE_ENEMY', payload: { index: targetIndex, data: { hp: newHp } } });
-            appendToLog(`You attack ${target.name} for ${damageTaken} damage!`);
+            
+            payload.onDamageDealt?.(damageTaken, isCrit);
+
+            dispatch({ type: 'UPDATE_ENEMY', payload: { index: payload.targetIndex, data: { hp: newHp } } });
+            appendToLog(`You attack ${target.name} for ${damageTaken} damage! ${isCrit ? 'CRITICAL HIT!' : ''}`);
             if (newHp <= 0) {
                 appendToLog(`${target.name} is defeated!`);
             }
+        } else if (action === 'ability' && payload.targetIndex !== undefined) {
+            dispatch({ type: 'PLAYER_ACTION_ABILITY', payload });
         } else if (action === 'defend') {
             dispatch({ type: 'PLAYER_ACTION_DEFEND' });
         } else if (action === 'flee') {
@@ -166,6 +184,11 @@ const App: React.FC = () => {
             }
         }
     }, [player, enemies, appendToLog, handleFoundItem, isPlayerTurn]);
+
+    const handleSocialChoice = useCallback((choice: SocialChoice) => {
+        dispatch({ type: 'RESOLVE_SOCIAL_CHOICE', payload: { choice } });
+        setIsGeneratingPostSocialScene(true);
+    }, []);
     
     // Effect to check for victory or trigger enemy turn after player action
     useEffect(() => {
@@ -185,7 +208,7 @@ const App: React.FC = () => {
             let currentHp = player.hp;
             for (let i = 0; i < enemies.length; i++) {
                  if (state.enemies[i].hp > 0 && currentHp > 0) { 
-                    await new Promise(resolve => setTimeout(resolve, 800));
+                    await new Promise(resolve => setTimeout(resolve, 1000));
                     
                     const enemy = state.enemies[i];
                     
@@ -199,31 +222,54 @@ const App: React.FC = () => {
                     if (willUseAbility && enemy.ability) {
                          appendToLog(`${enemy.name} uses ${enemy.ability}!`);
                         switch (enemy.ability) {
-                            case 'HEAL':
+                            case EnemyAbility.HEAL:
                                 const healAmount = Math.floor(enemy.maxHp * 0.25); // Heal for 25%
                                 dispatch({ type: 'ENEMY_ACTION_HEAL', payload: { enemyIndex: i, healAmount } });
                                 appendToLog(`${enemy.name} recovers ${healAmount} HP.`);
                                 break;
-                            case 'SHIELD':
+                            case EnemyAbility.SHIELD:
                                 dispatch({ type: 'ENEMY_ACTION_SHIELD', payload: { enemyIndex: i } });
                                 appendToLog(`${enemy.name} raises a magical shield!`);
+                                break;
+                            case EnemyAbility.DRAIN_LIFE:
+                                const drainDamage = Math.floor(enemy.attack * 0.8 + (Math.random() * 4 - 2));
+                                const playerDamageTakenDrain = player.isDefending ? Math.max(1, Math.floor(drainDamage / 2)) : drainDamage;
+                                currentHp = Math.max(0, currentHp - playerDamageTakenDrain);
+                                dispatch({type: 'ENEMY_ACTION_DRAIN_LIFE', payload: { enemyIndex: i, damage: playerDamageTakenDrain }})
+                                appendToLog(`${enemy.name} drains ${playerDamageTakenDrain} HP from you!`);
+                                break;
+                            case EnemyAbility.MULTI_ATTACK:
+                                for (let j=0; j<2; j++) {
+                                    if(currentHp > 0) {
+                                        await new Promise(resolve => setTimeout(resolve, 500));
+                                        const multiDamage = Math.floor(enemy.attack * 0.7 + (Math.random() * 3 - 1));
+                                        const playerDamageTakenMulti = player.isDefending ? Math.max(1, Math.floor(multiDamage / 2)) : multiDamage;
+                                        currentHp = Math.max(0, currentHp - playerDamageTakenMulti);
+                                        dispatch({ type: 'UPDATE_PLAYER', payload: { hp: currentHp } });
+                                        appendToLog(`${enemy.name} strikes! You take ${playerDamageTakenMulti} damage.`);
+                                    }
+                                }
                                 break;
                         }
                     } else {
                         // Handle attack
-                        const enemyDamage = Math.floor(enemy.attack + (Math.random() * 4 - 2));
+                        const isCrit = Math.random() < CRIT_CHANCE;
+                        let enemyDamage = Math.floor(enemy.attack + (Math.random() * 4 - 2));
+                        if(isCrit) {
+                            enemyDamage = Math.floor(enemyDamage * CRIT_MULTIPLIER);
+                        }
                         let playerDamageTaken = player.isDefending ? Math.max(1, Math.floor(enemyDamage / 2)) : enemyDamage;
                         const newPlayerHp = Math.max(0, currentHp - playerDamageTaken);
                         currentHp = newPlayerHp; // Update local HP tracker
                         dispatch({ type: 'UPDATE_PLAYER', payload: { hp: newPlayerHp } });
-                        appendToLog(`${enemy.name} attacks! You take ${playerDamageTaken} damage.`);
+                        appendToLog(`${enemy.name} attacks! You take ${playerDamageTaken} damage. ${isCrit ? 'CRITICAL!' : ''}`);
+                    }
 
-                        if (newPlayerHp <= 0) {
-                            dispatch({ type: 'SET_GAME_STATE', payload: GameState.GAME_OVER });
-                            appendToLog('You have been defeated...');
-                            enemyTurnInProgress.current = false;
-                            return; // Stop enemy turns if player is defeated
-                        }
+                    if (currentHp <= 0) {
+                        dispatch({ type: 'SET_GAME_STATE', payload: GameState.GAME_OVER });
+                        appendToLog('You have been defeated...');
+                        enemyTurnInProgress.current = false;
+                        return; // Stop enemy turns if player is defeated
                     }
                 }
             }
@@ -254,6 +300,18 @@ const App: React.FC = () => {
             });
         }
     }, [isGeneratingPostCombatScene, player, handleFoundItem]);
+
+    // Effect to generate the next scene after a social encounter
+    useEffect(() => {
+        if (isGeneratingPostSocialScene) {
+            generateScene(player).then(({ description, actions, foundItem }) => {
+                dispatch({ type: 'SET_SCENE', payload: { description, actions } });
+                if (foundItem) handleFoundItem(foundItem);
+                dispatch({ type: 'SET_GAME_STATE', payload: GameState.EXPLORING });
+                setIsGeneratingPostSocialScene(false);
+            });
+        }
+    }, [isGeneratingPostSocialScene, player, handleFoundItem]);
     
     const renderGameContent = () => {
         switch (gameState) {
@@ -268,7 +326,15 @@ const App: React.FC = () => {
             case GameState.EXPLORING:
                 return <ExploringView storyText={storyText} actions={actions} onAction={handleAction} />;
             case GameState.COMBAT:
-                return <CombatView storyText={storyText} enemies={enemies} isPlayerTurn={isPlayerTurn} onCombatAction={handleCombatAction} />;
+                return <CombatView 
+                    storyText={storyText} 
+                    enemies={enemies} 
+                    player={player}
+                    isPlayerTurn={isPlayerTurn} 
+                    onCombatAction={handleCombatAction} 
+                />;
+            case GameState.SOCIAL_ENCOUNTER:
+                return socialEncounter && <SocialEncounterView encounter={socialEncounter} onChoice={handleSocialChoice} />;
             default:
                 return null;
         }
@@ -306,6 +372,12 @@ const App: React.FC = () => {
                                 </div>
                                 <div className="space-y-4">
                                     <div className="flex items-center gap-2"><HeartIcon className="w-5 h-5 text-red-500" /> <StatusBar label="HP" currentValue={player.hp} maxValue={player.maxHp} colorClass="bg-red-500" /></div>
+                                    {player.class === CharacterClass.MAGE && player.mp !== undefined && player.maxMp !== undefined && (
+                                        <div className="flex items-center gap-2"><FireIcon className="w-5 h-5 text-blue-400" /> <StatusBar label="MP" currentValue={player.mp} maxValue={player.maxMp} colorClass="bg-blue-500" /></div>
+                                    )}
+                                    {player.class === CharacterClass.ROGUE && player.ep !== undefined && player.maxEp !== undefined && (
+                                        <div className="flex items-center gap-2"><BoltIcon className="w-5 h-5 text-green-400" /> <StatusBar label="EP" currentValue={player.ep} maxValue={player.maxEp} colorClass="bg-green-500" /></div>
+                                    )}
                                     <div className="flex items-center gap-2"><StarIcon className="w-5 h-5 text-yellow-400" /> <StatusBar label="XP" currentValue={player.xp} maxValue={player.xpToNextLevel} colorClass="bg-yellow-400" /></div>
                                     <div className="text-lg grid grid-cols-2 gap-2">
                                         <span>Level: <span className="font-bold text-white">{player.level}</span></span>

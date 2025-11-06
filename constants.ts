@@ -16,18 +16,22 @@ export const INITIAL_PLAYER_STATS: Player = {
 
 export const CLASS_STATS: Record<CharacterClass, Partial<Player>> = {
     [CharacterClass.WARRIOR]: {
-        maxHp: 60,
-        hp: 60,
+        maxHp: 70,
+        hp: 70,
         attack: 12,
     },
     [CharacterClass.MAGE]: {
-        maxHp: 40,
-        hp: 40,
+        maxHp: 45,
+        hp: 45,
         attack: 8,
+        maxMp: 30,
+        mp: 30,
     },
     [CharacterClass.ROGUE]: {
-        maxHp: 50,
-        hp: 50,
-        attack: 10,
+        maxHp: 55,
+        hp: 55,
+        attack: 9,
+        maxEp: 20,
+        ep: 20,
     }
 };

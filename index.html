@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="en">
   <head>
@@ -16,6 +15,36 @@
       }
       .font-press-start {
         font-family: 'Press Start 2P', cursive;
+      }
+      .damage-popup {
+        position: absolute;
+        top: 40%;
+        left: 50%;
+        font-size: 1.75rem;
+        font-weight: bold;
+        color: white;
+        text-shadow: 2px 2px 2px black;
+        animation: float-up 1s ease-out forwards;
+        pointer-events: none;
+        z-index: 10;
+        white-space: nowrap;
+      }
+
+      .damage-popup.crit {
+        font-size: 2.25rem;
+        color: #fef08a; /* yellow-200 */
+        font-family: 'Press Start 2P', cursive;
+      }
+
+      @keyframes float-up {
+        0% {
+          opacity: 1;
+          transform: translate(-50%, 0);
+        }
+        100% {
+          opacity: 0;
+          transform: translate(-50%, -60px);
+        }
       }
     </style>
   <script type="importmap">

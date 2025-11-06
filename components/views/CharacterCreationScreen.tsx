@@ -7,9 +7,9 @@ interface CharacterCreationScreenProps {
 }
 
 const classDescriptions: Record<CharacterClass, string> = {
-    [CharacterClass.WARRIOR]: "A master of arms, boasting high health and powerful attacks.",
-    [CharacterClass.MAGE]: "A wielder of arcane energies, fragile but capable of immense power.",
-    [CharacterClass.ROGUE]: "A cunning opportunist, striking a balance between offense and defense."
+    [CharacterClass.WARRIOR]: "A master of arms, boasting high health and powerful, reliable attacks.",
+    [CharacterClass.MAGE]: "Wields powerful magic fueled by Mana. Unleashes devastating spells like Fireball.",
+    [CharacterClass.ROGUE]: "A cunning opportunist who uses Energy to perform rapid attacks like Quick Strike."
 };
 
 export const CharacterCreationScreen: React.FC<CharacterCreationScreenProps> = ({ onCreate }) => {
