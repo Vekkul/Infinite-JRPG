@@ -27,9 +27,11 @@ const App: React.FC = () => {
     const [isResolvingCombat, setIsResolvingCombat] = useState(false);
     const [isGeneratingPostCombatScene, setIsGeneratingPostCombatScene] = useState(false);
     const [isGeneratingPostSocialScene, setIsGeneratingPostSocialScene] = useState(false);
+    const [showLevelUp, setShowLevelUp] = useState(false);
 
     const logRef = useRef<HTMLDivElement>(null);
     const enemyTurnInProgress = useRef(false);
+    const prevLevelRef = useRef(player.level);
 
     useEffect(() => {
         const savedData = localStorage.getItem(SAVE_KEY);
@@ -41,6 +43,15 @@ const App: React.FC = () => {
             logRef.current.scrollTop = logRef.current.scrollHeight;
         }
     }, [log]);
+
+    useEffect(() => {
+        if (player.level > prevLevelRef.current) {
+            setShowLevelUp(true);
+            const timer = setTimeout(() => setShowLevelUp(false), 3000); // Duration of the animation
+            return () => clearTimeout(timer);
+        }
+        prevLevelRef.current = player.level;
+    }, [player.level]);
     
     const appendToLog = useCallback((message: string) => {
         dispatch({ type: 'ADD_LOG', payload: message });
@@ -240,6 +251,7 @@ const App: React.FC = () => {
                                 const drainDamage = Math.floor(enemy.attack * 0.8 + (Math.random() * 4 - 2));
                                 const playerDamageTakenDrain = player.isDefending ? Math.max(1, Math.floor(drainDamage / 2)) : drainDamage;
                                 currentHp = Math.max(0, currentHp - playerDamageTakenDrain);
+                                dispatch({ type: 'UPDATE_PLAYER', payload: { hp: currentHp } });
                                 dispatch({type: 'ENEMY_ACTION_DRAIN_LIFE', payload: { enemyIndex: i, damage: playerDamageTakenDrain }})
                                 appendToLog(`${enemy.name} drains ${playerDamageTakenDrain} HP from you!`);
                                 break;
@@ -358,7 +370,14 @@ const App: React.FC = () => {
                 onUseItem={handleUseItem}
                 disabled={!isPlayerTurn && gameState === GameState.COMBAT}
             />
-            <div className="max-w-7xl mx-auto h-full bg-black/30 rounded-2xl border-4 border-gray-700 shadow-2xl p-4 flex flex-col">
+            <div className="max-w-7xl mx-auto h-full bg-black/30 rounded-2xl border-4 border-gray-700 shadow-2xl p-4 flex flex-col relative">
+                {showLevelUp && (
+                    <div className="absolute inset-0 bg-black/50 z-50 flex items-center justify-center pointer-events-none">
+                        <h1 className="text-6xl md:text-8xl font-press-start text-yellow-300 animate-level-up" style={{textShadow: '4px 4px 0 #000'}}>
+                            LEVEL UP!
+                        </h1>
+                    </div>
+                )}
                 <div className={`grid grid-cols-1 md:grid-cols-3 gap-6 h-full p-4 md:p-6 ${isScreenState ? 'items-center' : ''}`}>
                     {/* Player Status */}
                     {!isScreenState && (

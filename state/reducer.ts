@@ -166,6 +166,17 @@ export const reducer = (state: AppState, action: Action): AppState => {
                  newLog = appendToLog(newLog, `${target.name} is defeated!`);
             }
         }
+        
+        if (abilityName === 'Heavy Strike') {
+            const damage = Math.floor(state.player.attack * 1.8 + (Math.random() * 6));
+            const damageTaken = target.isShielded ? Math.floor(damage / 2) : damage;
+            const newHp = Math.max(0, target.hp - damageTaken);
+            newEnemies[targetIndex] = { ...target, hp: newHp };
+            newLog = appendToLog(newLog, `You use Heavy Strike on ${target.name} for ${damageTaken} damage!`);
+            if (newHp <= 0) {
+                 newLog = appendToLog(newLog, `${target.name} is defeated!`);
+            }
+        }
 
         return { ...state, player: newPlayerState, enemies: newEnemies, log: newLog };
     }
@@ -257,9 +268,8 @@ export const reducer = (state: AppState, action: Action): AppState => {
         const newEnemyHp = Math.min(enemy.maxHp, enemy.hp + healAmount);
         enemiesCopy[enemyIndex] = { ...enemy, hp: newEnemyHp };
 
-        const newPlayerHp = Math.max(0, state.player.hp - damage);
-
-        return { ...state, enemies: enemiesCopy, player: {...state.player, hp: newPlayerHp} };
+        // Player damage is now handled in App.tsx to prevent double-dipping
+        return { ...state, enemies: enemiesCopy };
     }
 
     case 'ENEMY_ACTION_SHIELD': {

@@ -3,6 +3,8 @@ import { Player, Enemy, GameAction, Item, ItemType, EnemyAbility, CharacterClass
 
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY as string });
 
+const SYSTEM_INSTRUCTION = "You are a creative and engaging dungeon master for a classic fantasy JRPG. Your descriptions are vivid, your monsters are menacing, and your scenarios are intriguing. Keep the tone epic and adventurous, with a slightly retro feel. Responses must adhere to the provided JSON schema.";
+
 const itemSchema = {
     type: Type.OBJECT,
     properties: {
@@ -125,6 +127,7 @@ export const generateScene = async (player: Player): Promise<{ description: stri
             model: "gemini-2.5-flash",
             contents: `Generate a new scene for a JRPG player at level ${player.level}. The player just finished a battle or arrived in a new area. Occasionally, include a social encounter.`,
             config: {
+                systemInstruction: SYSTEM_INSTRUCTION,
                 responseMimeType: "application/json",
                 responseSchema: sceneSchema,
                 temperature: 1.0,
@@ -163,10 +166,13 @@ export const generateScene = async (player: Player): Promise<{ description: stri
 
 export const generateEncounter = async (player: Player): Promise<Enemy[]> => {
      try {
+        const numMonsters = Math.floor(Math.random() * 3) + 1; // 1, 2, or 3
+
         const response = await ai.models.generateContent({
             model: "gemini-2.5-flash",
-            contents: `Generate a fantasy JRPG monster encounter for a player who is level ${player.level}. Generate between 1 and 3 monsters. Some might have special abilities like healing, shielding, multi-attack, or drain life. The encounter should be a suitable challenge.`,
+            contents: `Generate a fantasy JRPG monster encounter for a player who is level ${player.level}. Generate exactly ${numMonsters} monster(s). Some might have special abilities like healing, shielding, multi-attack, or drain life. The encounter should be a suitable challenge.`,
             config: {
+                systemInstruction: SYSTEM_INSTRUCTION,
                 responseMimeType: "application/json",
                 responseSchema: encounterSchema,
                 temperature: 1.0,
@@ -200,6 +206,7 @@ export const generateSocialEncounter = async (player: Player): Promise<SocialEnc
             model: "gemini-2.5-flash",
             contents: `Generate a social, non-combat encounter for a level ${player.level} ${player.class} in a JRPG. The situation should present a clear choice with two distinct outcomes. One choice might offer a small reward like XP or an item.`,
             config: {
+                systemInstruction: SYSTEM_INSTRUCTION,
                 responseMimeType: "application/json",
                 responseSchema: socialEncounterSchema,
                 temperature: 1.0,

@@ -1,6 +1,5 @@
 import React from 'react';
 
-// Fix: Add title prop to SwordIcon
 export const SwordIcon = ({ className = "w-6 h-6", title }: { className?: string; title?: string }) => (
   <svg xmlns="http://www.w3.org/2000/svg" className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
     {title && <title>{title}</title>}
@@ -81,8 +80,9 @@ export const FireIcon = ({ className = "w-6 h-6" }: { className?: string }) => (
     </svg>
 );
 
-export const BoltIcon = ({ className = "w-6 h-6" }: { className?: string }) => (
+export const BoltIcon = ({ className = "w-6 h-6", title }: { className?: string; title?: string }) => (
     <svg xmlns="http://www.w3.org/2000/svg" className={className} viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round">
+        {title && <title>{title}</title>}
         <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>
     </svg>
 );

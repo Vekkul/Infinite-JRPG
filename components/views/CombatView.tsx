@@ -64,6 +64,9 @@ export const CombatView: React.FC<CombatViewProps> = ({ storyText, enemies, play
     };
     
     const renderAbilities = () => {
+        if (player.class === CharacterClass.WARRIOR) {
+            return <button onClick={() => handleActionClick('ability', {name: 'Heavy Strike', cost: 0})} className="flex items-center justify-center gap-2 text-lg bg-red-800 hover:bg-red-700 text-white font-bold py-3 px-4 rounded-lg border-2 border-red-600 transition-all transform hover:scale-105"><SwordIcon/> Heavy Strike</button>
+        }
         if (player.class === CharacterClass.MAGE) {
             const cost = 10;
             const disabled = (player.mp ?? 0) < cost;
@@ -88,19 +91,26 @@ export const CombatView: React.FC<CombatViewProps> = ({ storyText, enemies, play
             {/* Enemies Area */}
             <div className="flex-grow flex flex-wrap items-center justify-center gap-4 py-4">
                 {enemies.map((enemy, index) => enemy.hp > 0 && (
-                    <div key={index} className="relative bg-gray-800/80 p-3 rounded-lg border-2 border-red-500 shadow-lg animate-fade-in w-48 text-center">
+                    <div 
+                        key={index} 
+                        className={`relative bg-gray-800/80 p-3 rounded-lg border-2 shadow-lg animate-fade-in w-48 text-center transition-all duration-300 ${
+                            enemy.isShielded ? 'border-cyan-400 shadow-lg shadow-cyan-400/50 animate-pulse' : 'border-red-500'
+                        }`}
+                    >
                         {damagePopups.filter(p => p.enemyIndex === index).map(p => (
                             <div key={p.id} className={`damage-popup ${p.isCrit ? 'crit' : ''}`}>
                                 {p.isCrit ? 'CRITICAL! ' : ''}-{p.value}
                             </div>
                         ))}
-                        <h2 className="text-lg font-press-start text-red-300">{enemy.name}</h2>
-                        <div className="absolute top-1 right-1 flex gap-1">
-                            {enemy.ability === EnemyAbility.HEAL && <HealIcon className="w-4 h-4 text-green-400" title="Heal Ability" />}
-                            {enemy.ability === EnemyAbility.DRAIN_LIFE && <HealIcon className="w-4 h-4 text-purple-400" title="Drain Life Ability" />}
-                            {enemy.ability === EnemyAbility.MULTI_ATTACK && <SwordIcon className="w-4 h-4 text-orange-400" title="Multi-Attack Ability" />}
-                            {enemy.isShielded && <ShieldIcon className="w-4 h-4 text-blue-400" title="Shielded" />}
+                        
+                        <div className="flex items-center justify-center gap-2 mb-1">
+                            <h2 className="text-lg font-press-start text-red-300 truncate" title={enemy.name}>{enemy.name}</h2>
+                            {enemy.ability === EnemyAbility.HEAL && <HealIcon className="w-5 h-5 text-green-400" title="Heal Ability" />}
+                            {enemy.ability === EnemyAbility.SHIELD && <ShieldIcon className="w-5 h-5 text-cyan-400" title="Shield Ability" />}
+                            {enemy.ability === EnemyAbility.DRAIN_LIFE && <BoltIcon className="w-5 h-5 text-purple-400" title="Drain Life Ability" />}
+                            {enemy.ability === EnemyAbility.MULTI_ATTACK && <SwordIcon className="w-5 h-5 text-orange-400" title="Multi-Attack Ability" />}
                         </div>
+
                         <StatusBar label="HP" currentValue={enemy.hp} maxValue={enemy.maxHp} colorClass="bg-red-500" />
                     </div>
                 ))}
@@ -111,7 +121,7 @@ export const CombatView: React.FC<CombatViewProps> = ({ storyText, enemies, play
                  {isPlayerTurn && view === 'main' && (
                     <>
                         <button onClick={() => handleActionClick('attack')} className="flex items-center justify-center gap-2 text-lg bg-red-700 hover:bg-red-600 text-white font-bold py-3 px-4 rounded-lg border-2 border-red-500 transition-all transform hover:scale-105"><SwordIcon/>Attack</button>
-                        {player.class !== CharacterClass.WARRIOR && <button onClick={() => setView('abilities')} className="flex items-center justify-center gap-2 text-lg bg-purple-700 hover:bg-purple-600 text-white font-bold py-3 px-4 rounded-lg border-2 border-purple-500 transition-all transform hover:scale-105">Ability</button>}
+                        <button onClick={() => setView('abilities')} className="flex items-center justify-center gap-2 text-lg bg-purple-700 hover:bg-purple-600 text-white font-bold py-3 px-4 rounded-lg border-2 border-purple-500 transition-all transform hover:scale-105">Ability</button>
                         <button onClick={() => onCombatAction('defend')} className="flex items-center justify-center gap-2 text-lg bg-blue-700 hover:bg-blue-600 text-white font-bold py-3 px-4 rounded-lg border-2 border-blue-500 transition-all transform hover:scale-105"><ShieldIcon/>Defend</button>
                         <button onClick={() => onCombatAction('flee')} className="flex items-center justify-center gap-2 text-lg bg-green-700 hover:bg-green-600 text-white font-bold py-3 px-4 rounded-lg border-2 border-green-500 transition-all transform hover:scale-105"><RunIcon/>Flee</button>
                     </>
