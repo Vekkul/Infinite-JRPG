@@ -1,5 +1,5 @@
 import { GoogleGenAI, Type, Modality } from "@google/genai";
-import { Player, Enemy, GameAction, Item, ItemType, EnemyAbility, CharacterClass, SocialEncounter, RewardType } from '../types';
+import { Player, Enemy, GameAction, Item, ItemType, EnemyAbility, CharacterClass, SocialEncounter, RewardType, AIPersonality, MapLocation, WorldData } from '../types';
 
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY as string });
 
@@ -18,36 +18,30 @@ const itemSchema = {
 };
 
 const sceneSchema = {
-  type: Type.OBJECT,
-  properties: {
-    description: {
-      type: Type.STRING,
-      description: "A vivid, fantasy JRPG-style description of the current location. Max 80 words. Be creative and evocative. Mention things like weather, terrain, and mood.",
-    },
-    actions: {
-      type: Type.ARRAY,
-      description: "An array of 3 possible actions for the player. One should be 'rest', one should be an 'encounter' (like 'Challenge the guardian'), and one should be 'explore'. Occasionally, include a 'social' action type instead of explore or encounter.",
-      items: {
-        type: Type.OBJECT,
-        properties: {
-          label: {
+    type: Type.OBJECT,
+    properties: {
+        description: {
             type: Type.STRING,
-            description: "The text on the action button, e.g., 'Venture into the Whispering Woods'.",
-          },
-          type: {
-            type: Type.STRING,
-            description: "The type of action. Must be one of: 'explore', 'rest', 'encounter', 'social'. Ensure a good mix of types.",
-          },
+            description: "A vivid, fantasy JRPG-style description of the current location, reflecting the provided context. Max 80 words. Be creative and evocative.",
         },
-        required: ["label", "type"],
-      },
+        localActions: {
+            type: Type.ARRAY,
+            description: "An array of 1 or 2 possible actions unique to this location, besides moving. e.g., 'Search the abandoned shack', 'Listen to the wind'. Label should be short. Type should be 'explore' or 'encounter'.",
+            items: {
+                type: Type.OBJECT,
+                properties: {
+                    label: { type: Type.STRING, description: "The text on the action button." },
+                    type: { type: Type.STRING, description: "The type of action. Must be 'explore' or 'encounter'." },
+                },
+                required: ["label", "type"],
+            },
+        },
+        foundItem: {
+            ...itemSchema,
+            description: "An item the player finds upon arriving in this scene. Optional, only include it about 25% of the time."
+        }
     },
-    foundItem: {
-      ...itemSchema,
-      description: "An item the player finds in this scene. Optional, only include it about 25% of the time."
-    }
-  },
-  required: ["description", "actions"],
+    required: ["description", "localActions"],
 };
 
 const enemySchema = {
@@ -76,6 +70,10 @@ const enemySchema = {
         ability: {
             type: Type.STRING,
             description: `An optional special ability for the monster. Can be one of: '${EnemyAbility.HEAL}', '${EnemyAbility.SHIELD}', '${EnemyAbility.MULTI_ATTACK}', '${EnemyAbility.DRAIN_LIFE}'. Omit for most monsters.`
+        },
+        aiPersonality: {
+            type: Type.STRING,
+            description: `The monster's combat AI. Determines its behavior. Can be one of: '${AIPersonality.AGGRESSIVE}' (attacks often), '${AIPersonality.DEFENSIVE}' (heals/shields when low HP), '${AIPersonality.STRATEGIC}' (balances attack and defense), or '${AIPersonality.WILD}' (unpredictable). Assign strategically based on the monster's concept and abilities.`
         }
     },
     required: ["name", "description", "hp", "attack"]
@@ -120,45 +118,77 @@ const socialEncounterSchema = {
     required: ["description", "choices"]
 };
 
+const mapLocationSchema = {
+    type: Type.OBJECT,
+    properties: {
+        id: { type: Type.STRING, description: "A unique, one-word ID for the location (e.g., 'forest', 'castle')." },
+        name: { type: Type.STRING, description: "A creative, fantasy name for the location (e.g., 'Glimmerwood Forest', 'Castle Valoria')." },
+        description: { type: Type.STRING, description: "A brief, evocative description of the location. Max 30 words." },
+        x: { type: Type.INTEGER, description: "The horizontal position on the map, from 5 to 95." },
+        y: { type: Type.INTEGER, description: "The vertical position on the map, from 5 to 95." },
+    },
+    required: ["id", "name", "description", "x", "y"]
+};
 
-export const generateScene = async (player: Player): Promise<{ description: string; actions: GameAction[]; foundItem?: Omit<Item, 'quantity'>; }> => {
+const connectionSchema = {
+    type: Type.OBJECT,
+    properties: {
+        from: { type: Type.STRING, description: "The ID of the starting location." },
+        to: { type: Type.STRING, description: "The ID of the destination location." },
+    },
+    required: ["from", "to"]
+};
+
+const worldDataSchema = {
+    type: Type.OBJECT,
+    properties: {
+        locations: {
+            type: Type.ARRAY,
+            description: "An array of 6 to 8 unique map locations.",
+            items: mapLocationSchema
+        },
+        connections: {
+            type: Type.ARRAY,
+            description: "An array of connections between location IDs, ensuring all locations form a single connected graph.",
+            items: connectionSchema
+        },
+        startLocationId: {
+            type: Type.STRING,
+            description: "The ID of the location where the player should start."
+        }
+    },
+    required: ["locations", "connections", "startLocationId"]
+};
+
+
+export const generateScene = async (player: Player, location: MapLocation): Promise<{ description: string; actions: GameAction[]; foundItem?: Omit<Item, 'quantity'>; }> => {
     try {
         const response = await ai.models.generateContent({
             model: "gemini-2.5-flash",
-            contents: `Generate a new scene for a JRPG player at level ${player.level}. The player just finished a battle or arrived in a new area. Occasionally, include a social encounter.`,
+            contents: `Generate a new scene for a JRPG player at level ${player.level}. The player has just arrived at ${location.name}: "${location.description}". Generate a vivid description and 1-2 thematically appropriate local actions.`,
             config: {
                 systemInstruction: SYSTEM_INSTRUCTION,
                 responseMimeType: "application/json",
                 responseSchema: sceneSchema,
-                temperature: 1.0,
+                temperature: 0.9,
             },
         });
 
         const data = JSON.parse(response.text);
-        // Ensure actions are unique and correct types
-        const actionsMap = new Map<string, GameAction>();
-        (data.actions as GameAction[]).forEach(action => {
-            if (['explore', 'rest', 'encounter', 'social'].includes(action.type)) {
-                if(!actionsMap.has(action.type)) {
-                    actionsMap.set(action.type, action);
-                }
-            }
-        });
         
         return {
             description: data.description,
-            actions: Array.from(actionsMap.values()),
+            actions: data.localActions || [],
             foundItem: data.foundItem
         };
     } catch (error) {
         console.error("Error generating scene:", error);
         // Fallback in case of API error
         return {
-            description: "An ancient path winds before you, shrouded in an eerie silence. The air is thick with unspoken magic.",
+            description: `You have arrived at ${location.name}. An ancient path winds before you, shrouded in an eerie silence. The air is thick with unspoken magic.`,
             actions: [
-                { label: "Follow the path", type: "explore" },
-                { label: "Search for danger", type: "encounter" },
-                { label: "Set up camp", type: "rest" },
+                { label: "Search the area", type: "explore" },
+                { label: "Listen for danger", type: "encounter" },
             ],
         };
     }
@@ -196,6 +226,7 @@ export const generateEncounter = async (player: Player): Promise<Enemy[]> => {
             maxHp: hp,
             attack: attack,
             isShielded: false,
+            aiPersonality: AIPersonality.AGGRESSIVE,
         }];
     }
 };
@@ -213,7 +244,8 @@ export const generateSocialEncounter = async (player: Player): Promise<SocialEnc
             },
         });
         return JSON.parse(response.text) as SocialEncounter;
-    } catch (error) {
+    } catch (error)
+        {
         console.error("Error generating social encounter:", error);
         // Fallback social encounter
         return {
@@ -245,8 +277,8 @@ export const generateCharacterPortrait = async (description: string, characterCl
                 ],
             },
             config: {
+// FIX: Removed unsupported temperature parameter for image generation model.
                 responseModalities: [Modality.IMAGE],
-                temperature: 0.9,
             },
         });
 
@@ -261,5 +293,65 @@ export const generateCharacterPortrait = async (description: string, characterCl
         console.error("Error generating character portrait:", error);
         // In case of an error, we'll return an empty string. The UI can handle this.
         return "";
+    }
+};
+
+export const generateWorldData = async (): Promise<WorldData | null> => {
+    try {
+        // FIX: Separated world data generation (JSON) and world map generation (image) into two API calls.
+        // Step 1: Generate the structured world data (locations, connections)
+        const worldDataResponse = await ai.models.generateContent({
+            model: 'gemini-2.5-flash',
+            contents: `Generate a JSON object that follows the provided schema to describe a fantasy JRPG world with 6 to 8 locations. The world should have diverse biomes like lush forests, snowy mountains, a small village, a large castle, and a coastline. The locations must form a single connected graph.`,
+            config: {
+                systemInstruction: SYSTEM_INSTRUCTION,
+                responseMimeType: "application/json",
+                responseSchema: worldDataSchema,
+                temperature: 0.8,
+            },
+        });
+
+        const worldJson = JSON.parse(worldDataResponse.text.trim());
+
+        // Step 2: Generate the world map image based on the generated data
+        const locationDescriptions = worldJson.locations.map((loc: MapLocation) => `${loc.name} (${loc.description})`).join('; ');
+        
+        const imageResponse = await ai.models.generateContent({
+            model: 'gemini-2.5-flash-image',
+            contents: {
+                parts: [
+                    {
+                        text: `Generate a top-down, 16-bit pixel art style JRPG world map. The map should visually represent a world containing these locations: ${locationDescriptions}. Feature diverse biomes like forests, mountains, villages, castles, and coastlines. Do not include any text, icons, or UI elements on the map itself.`,
+                    },
+                ],
+            },
+            config: {
+                responseModalities: [Modality.IMAGE],
+            },
+        });
+
+
+        let image = "";
+        for (const part of imageResponse.candidates[0].content.parts) {
+            if (part.inlineData) {
+                image = part.inlineData.data;
+                break;
+            }
+        }
+
+        if (!image) throw new Error("No image data found in response for world map.");
+        
+        const locationsWithExplored = worldJson.locations.map((loc: Omit<MapLocation, 'isExplored'>) => ({...loc, isExplored: false}));
+        
+        return {
+            image,
+            locations: locationsWithExplored,
+            connections: worldJson.connections,
+            startLocationId: worldJson.startLocationId,
+        };
+
+    } catch (error) {
+        console.error("Error generating world data:", error);
+        return null;
     }
 };

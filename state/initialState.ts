@@ -10,4 +10,6 @@ export const initialState: AppState = {
   log: [],
   isPlayerTurn: true,
   socialEncounter: null,
+  worldData: null,
+  playerLocationId: null,
 };

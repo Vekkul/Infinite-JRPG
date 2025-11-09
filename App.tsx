@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef, useReducer } from 'react';
-import { GameState, Player, Enemy, GameAction, Item, ItemType, SaveData, CharacterClass, EnemyAbility, SocialChoice } from './types';
-import { generateScene, generateEncounter, generateSocialEncounter } from './services/geminiService';
+import { GameState, Player, Enemy, GameAction, Item, ItemType, SaveData, CharacterClass, EnemyAbility, SocialChoice, AIPersonality } from './types';
+import { generateScene, generateEncounter, generateSocialEncounter, generateWorldData } from './services/geminiService';
 import { Inventory } from './components/Inventory';
 import { reducer } from './state/reducer';
 import { initialState } from './state/initialState';
@@ -11,18 +11,20 @@ import { GameOverScreen } from './components/views/GameOverScreen';
 import { ExploringView } from './components/views/ExploringView';
 import { CombatView } from './components/views/CombatView';
 import { SocialEncounterView } from './components/views/SocialEncounterView';
+import { WorldMapView } from './components/views/WorldMapView';
 import { StatusBar } from './components/StatusBar';
-import { HeartIcon, StarIcon, SaveIcon, BoltIcon, FireIcon } from './components/icons';
+import { HeartIcon, StarIcon, SaveIcon, BoltIcon, FireIcon, MapIcon } from './components/icons';
 
-const SAVE_KEY = 'jrpgSaveDataV1';
+const SAVE_KEY = 'jrpgSaveDataV2';
 const CRIT_CHANCE = 0.1;
 const CRIT_MULTIPLIER = 1.5;
 
 const App: React.FC = () => {
     const [state, dispatch] = useReducer(reducer, initialState);
-    const { gameState, player, enemies, storyText, actions, log, isPlayerTurn, socialEncounter } = state;
+    const { gameState, player, enemies, storyText, actions, log, isPlayerTurn, socialEncounter, worldData, playerLocationId } = state;
 
     const [isInventoryOpen, setIsInventoryOpen] = useState(false);
+    const [isMapOpen, setIsMapOpen] = useState(false);
     const [saveFileExists, setSaveFileExists] = useState(false);
     const [isResolvingCombat, setIsResolvingCombat] = useState(false);
     const [isGeneratingPostCombatScene, setIsGeneratingPostCombatScene] = useState(false);
@@ -32,6 +34,8 @@ const App: React.FC = () => {
     const logRef = useRef<HTMLDivElement>(null);
     const enemyTurnInProgress = useRef(false);
     const prevLevelRef = useRef(player.level);
+    const isInitialMount = useRef(true);
+    const prevPlayerLocationId = useRef<string | null>(null);
 
     useEffect(() => {
         const savedData = localStorage.getItem(SAVE_KEY);
@@ -66,31 +70,51 @@ const App: React.FC = () => {
         dispatch({ type: 'START_NEW_GAME' });
     }, []);
 
-    const handleCharacterCreation = useCallback((details: { name: string; class: CharacterClass; portrait: string }) => {
+    const handleCharacterCreation = useCallback(async (details: { name: string; class: CharacterClass; portrait: string }) => {
         dispatch({ type: 'CREATE_CHARACTER', payload: details });
         
-        const tempPlayer = {
-            ...initialState.player,
-            name: details.name,
-            class: details.class,
-            portrait: details.portrait,
-        };
+        const newWorldData = await generateWorldData();
+        if (!newWorldData) {
+            dispatch({ type: 'SET_GAME_STATE', payload: GameState.START_SCREEN });
+            appendToLog("Error: Could not generate a new world. Please try again.");
+            return;
+        }
+        dispatch({ type: 'SET_WORLD_DATA', payload: newWorldData });
 
-        generateScene(tempPlayer).then(({ description, actions, foundItem }) => {
-            dispatch({ type: 'SET_SCENE', payload: { description, actions } });
-            if (foundItem) {
-                handleFoundItem(foundItem);
+        const startLocation = newWorldData.locations.find(l => l.id === newWorldData.startLocationId);
+        if (startLocation) {
+            const tempPlayer = { ...initialState.player, name: details.name, class: details.class, portrait: details.portrait };
+            const scene = await generateScene(tempPlayer, startLocation);
+            
+            const moveActions = newWorldData.connections
+                .filter(c => c.from === startLocation.id || c.to === startLocation.id)
+                .map(c => {
+                    const targetId = c.from === startLocation.id ? c.to : c.from;
+                    const targetLocation = newWorldData.locations.find(l => l.id === targetId);
+                    return {
+                        label: `Go to ${targetLocation?.name || '???' }`,
+                        type: 'move' as const,
+                        targetLocationId: targetId
+                    };
+                });
+            const allActions = [...scene.actions, ...moveActions];
+
+            dispatch({ type: 'SET_SCENE', payload: { description: scene.description, actions: allActions } });
+            if (scene.foundItem) {
+                handleFoundItem(scene.foundItem);
             }
-            dispatch({ type: 'SET_GAME_STATE', payload: GameState.EXPLORING });
-        });
-    }, [handleFoundItem]);
+        }
+        dispatch({ type: 'SET_GAME_STATE', payload: GameState.EXPLORING });
+
+    }, [handleFoundItem, appendToLog]);
 
     const saveGame = useCallback(() => {
-        const saveData: SaveData = { player, storyText, actions, log };
+        if (!worldData || !playerLocationId) return;
+        const saveData: SaveData = { player, storyText, actions, log, worldData, playerLocationId };
         localStorage.setItem(SAVE_KEY, JSON.stringify(saveData));
         setSaveFileExists(true);
         appendToLog('Game Saved!');
-    }, [player, storyText, actions, log, appendToLog]);
+    }, [player, storyText, actions, log, worldData, playerLocationId, appendToLog]);
 
     const loadGame = useCallback(() => {
         const savedDataString = localStorage.getItem(SAVE_KEY);
@@ -103,38 +127,117 @@ const App: React.FC = () => {
     }, [appendToLog]);
 
     const handleAction = useCallback(async (action: GameAction) => {
-        dispatch({ type: 'SET_GAME_STATE', payload: GameState.LOADING });
-        appendToLog(`You decide to ${action.label.toLowerCase()}...`);
+        if (action.type === 'move' && action.targetLocationId) {
+            dispatch({ type: 'MOVE_PLAYER', payload: action.targetLocationId });
+        } else {
+            dispatch({ type: 'SET_GAME_STATE', payload: GameState.LOADING });
+            appendToLog(`You decide to ${action.label.toLowerCase()}...`);
 
-        if (action.type === 'rest') {
-            const healAmount = Math.floor(player.maxHp * 0.5);
-            const newHp = Math.min(player.maxHp, player.hp + healAmount);
-            const healed = newHp - player.hp;
-            if (healed > 0) {
-                 dispatch({ type: 'UPDATE_PLAYER', payload: { hp: newHp } });
-                 appendToLog(`You rest and recover ${healed} HP.`);
-            } else {
-                appendToLog(`You are already at full health.`);
+            if (action.type === 'rest') {
+                const healAmount = Math.floor(player.maxHp * 0.5);
+                const newHp = Math.min(player.maxHp, player.hp + healAmount);
+                const healed = newHp - player.hp;
+                if (healed > 0) {
+                     dispatch({ type: 'UPDATE_PLAYER', payload: { hp: newHp } });
+                     appendToLog(`You rest and recover ${healed} HP.`);
+                } else {
+                    appendToLog(`You are already at full health.`);
+                }
+               
+                 const currentLocation = worldData?.locations.find(l => l.id === playerLocationId);
+                 if (currentLocation) {
+                    const { description, actions: localActions, foundItem } = await generateScene(player, currentLocation);
+                    
+                    const moveActions = worldData.connections
+                        .filter(c => c.from === playerLocationId || c.to === playerLocationId)
+                        .map(c => {
+                            const targetId = c.from === playerLocationId ? c.to : c.from;
+                            const targetLocation = worldData.locations.find(l => l.id === targetId);
+                            return {
+                                label: `Go to ${targetLocation?.name || '???' }`,
+                                type: 'move' as const,
+                                targetLocationId: targetId
+                            };
+                        });
+                    dispatch({ type: 'SET_SCENE', payload: { description, actions: [...localActions, ...moveActions] } });
+
+                    if (foundItem) handleFoundItem(foundItem);
+                 }
+                dispatch({ type: 'SET_GAME_STATE', payload: GameState.EXPLORING });
+            } else if (action.type === 'social') {
+                const encounter = await generateSocialEncounter(player);
+                dispatch({ type: 'SET_SOCIAL_ENCOUNTER', payload: encounter });
             }
-           
-             const { description, actions, foundItem } = await generateScene(player);
-            dispatch({ type: 'SET_SCENE', payload: { description, actions } });
-            if (foundItem) handleFoundItem(foundItem);
-            dispatch({ type: 'SET_GAME_STATE', payload: GameState.EXPLORING });
-        } else if (action.type === 'social') {
-            const encounter = await generateSocialEncounter(player);
-            dispatch({ type: 'SET_SOCIAL_ENCOUNTER', payload: encounter });
+            else { // explore or encounter
+                const newEnemies = await generateEncounter(player);
+                const enemyNames = newEnemies.map(e => e.name).join(', ');
+                dispatch({ type: 'SET_ENEMIES', payload: newEnemies });
+                dispatch({ type: 'SET_SCENE', payload: { description: `A wild ${enemyNames} appeared!`, actions: [] } });
+                appendToLog(newEnemies.length > 0 ? newEnemies[0].description : 'A mysterious force blocks your way.');
+                dispatch({ type: 'SET_GAME_STATE', payload: GameState.COMBAT });
+                dispatch({ type: 'SET_PLAYER_TURN', payload: true });
+            }
         }
-        else {
-            const newEnemies = await generateEncounter(player);
-            const enemyNames = newEnemies.map(e => e.name).join(', ');
-            dispatch({ type: 'SET_ENEMIES', payload: newEnemies });
-            dispatch({ type: 'SET_SCENE', payload: { description: `A wild ${enemyNames} appeared!`, actions: [] } });
-            appendToLog(newEnemies.length > 0 ? newEnemies[0].description : 'A mysterious force blocks your way.');
-            dispatch({ type: 'SET_GAME_STATE', payload: GameState.COMBAT });
-            dispatch({ type: 'SET_PLAYER_TURN', payload: true });
+    }, [player, appendToLog, handleFoundItem, worldData, playerLocationId]);
+
+    // This effect handles the logic for moving between locations.
+    useEffect(() => {
+        // We use a ref to track the previous location to distinguish
+        // between a game load (prev is null) and an actual move (prev is not null).
+        const prevLocationId = prevPlayerLocationId.current;
+        
+        // Update the ref for the next render cycle.
+        prevPlayerLocationId.current = playerLocationId;
+
+        if (isInitialMount.current) {
+            isInitialMount.current = false;
+            return;
         }
-    }, [player, appendToLog, handleFoundItem]);
+        
+        // Only trigger move logic if the location ID has actually changed from
+        // one valid location to another. This prevents firing on game load,
+        // where the previous location ID would be null.
+        if (prevLocationId && prevLocationId !== playerLocationId) {
+            if (playerLocationId && worldData) {
+                const move = async () => {
+                    dispatch({ type: 'SET_GAME_STATE', payload: GameState.LOADING });
+
+                    const newLocation = worldData.locations.find(l => l.id === playerLocationId);
+                    if (!newLocation) return;
+                    
+                    appendToLog(`You travel to ${newLocation.name}...`);
+                    
+                    const encounterChance = 0.5;
+                    if (Math.random() < encounterChance) {
+                        const newEnemies = await generateEncounter(player);
+                        const enemyNames = newEnemies.map(e => e.name).join(', ');
+                        dispatch({ type: 'SET_ENEMIES', payload: newEnemies });
+                        dispatch({ type: 'SET_SCENE', payload: { description: `While traveling to ${newLocation.name}, you are ambushed by a ${enemyNames}!`, actions: [] } });
+                        appendToLog(newEnemies.length > 0 ? newEnemies[0].description : 'A mysterious force blocks your way.');
+                        dispatch({ type: 'SET_GAME_STATE', payload: GameState.COMBAT });
+                        dispatch({ type: 'SET_PLAYER_TURN', payload: true });
+                    } else {
+                        const { description, actions: localActions, foundItem } = await generateScene(player, newLocation);
+                         const moveActions = worldData.connections
+                            .filter(c => c.from === playerLocationId || c.to === playerLocationId)
+                            .map(c => {
+                                const targetId = c.from === playerLocationId ? c.to : c.from;
+                                const targetLocation = worldData.locations.find(l => l.id === targetId);
+                                return {
+                                    label: `Go to ${targetLocation?.name || '???' }`,
+                                    type: 'move' as const,
+                                    targetLocationId: targetId
+                                };
+                            });
+                        dispatch({ type: 'SET_SCENE', payload: { description, actions: [...localActions, ...moveActions] } });
+                        if (foundItem) handleFoundItem(foundItem);
+                        dispatch({ type: 'SET_GAME_STATE', payload: GameState.EXPLORING });
+                    }
+                };
+                move();
+            }
+        }
+    }, [playerLocationId, worldData, player, appendToLog, handleFoundItem]);
 
     const handleUseItem = useCallback((item: Item, index: number) => {
         if (item.type === ItemType.POTION) {
@@ -189,9 +292,24 @@ const App: React.FC = () => {
         } else if (action === 'flee') {
             if (Math.random() > 0.4) {
                 appendToLog('You successfully escaped!');
-                const { description, actions, foundItem } = await generateScene(player);
-                dispatch({ type: 'SET_SCENE', payload: { description, actions } });
-                if (foundItem) handleFoundItem(foundItem);
+                const currentLocation = worldData?.locations.find(l => l.id === playerLocationId);
+                if (currentLocation) {
+                    const { description, actions: localActions, foundItem } = await generateScene(player, currentLocation);
+                     const moveActions = worldData.connections
+                        .filter(c => c.from === playerLocationId || c.to === playerLocationId)
+                        .map(c => {
+                            const targetId = c.from === playerLocationId ? c.to : c.from;
+                            const targetLocation = worldData.locations.find(l => l.id === targetId);
+                            return {
+                                label: `Go to ${targetLocation?.name || '???' }`,
+                                type: 'move' as const,
+                                targetLocationId: targetId
+                            };
+                        });
+
+                    dispatch({ type: 'SET_SCENE', payload: { description, actions: [...localActions, ...moveActions] } });
+                    if (foundItem) handleFoundItem(foundItem);
+                }
                 dispatch({ type: 'SET_ENEMIES', payload: [] });
                 dispatch({ type: 'SET_GAME_STATE', payload: GameState.EXPLORING });
                 return;
@@ -199,7 +317,7 @@ const App: React.FC = () => {
                 dispatch({ type: 'PLAYER_ACTION_FLEE_FAILURE' });
             }
         }
-    }, [player, enemies, appendToLog, handleFoundItem, isPlayerTurn]);
+    }, [player, enemies, appendToLog, handleFoundItem, isPlayerTurn, worldData, playerLocationId]);
 
     const handleSocialChoice = useCallback((choice: SocialChoice) => {
         dispatch({ type: 'RESOLVE_SOCIAL_CHOICE', payload: { choice } });
@@ -222,6 +340,52 @@ const App: React.FC = () => {
         const runEnemyTurns = async () => {
             enemyTurnInProgress.current = true;
             let currentHp = player.hp;
+
+            const determineEnemyAction = (enemy: Enemy): 'attack' | EnemyAbility | null => {
+                if (!enemy.ability) return 'attack';
+
+                const hpPercent = enemy.hp / enemy.maxHp;
+
+                switch (enemy.aiPersonality) {
+                    case AIPersonality.DEFENSIVE:
+                        if (hpPercent < 0.5 && (enemy.ability === EnemyAbility.HEAL || enemy.ability === EnemyAbility.SHIELD)) {
+                            if (enemy.ability === EnemyAbility.SHIELD && enemy.isShielded) return 'attack'; // Don't shield if already shielded
+                            return enemy.ability;
+                        }
+                        return 'attack';
+
+                    case AIPersonality.STRATEGIC:
+                        if (hpPercent < 0.3 && enemy.ability === EnemyAbility.HEAL) {
+                            return EnemyAbility.HEAL;
+                        }
+                        if (hpPercent < 0.7 && !enemy.isShielded && enemy.ability === EnemyAbility.SHIELD && Math.random() < 0.8) {
+                            return EnemyAbility.SHIELD;
+                        }
+                        if ((enemy.ability === EnemyAbility.DRAIN_LIFE || enemy.ability === EnemyAbility.MULTI_ATTACK) && Math.random() < 0.4) {
+                            return enemy.ability;
+                        }
+                        return 'attack';
+                    
+                    case AIPersonality.WILD:
+                        if (enemy.ability === EnemyAbility.SHIELD && enemy.isShielded) return 'attack';
+                        if (Math.random() < 0.5) {
+                            return enemy.ability;
+                        }
+                        return 'attack';
+
+                    case AIPersonality.AGGRESSIVE:
+                    default:
+                        if ((enemy.ability === EnemyAbility.DRAIN_LIFE || enemy.ability === EnemyAbility.MULTI_ATTACK) && Math.random() < 0.3) {
+                            return enemy.ability;
+                        }
+                        if ((enemy.ability === EnemyAbility.HEAL || enemy.ability === EnemyAbility.SHIELD) && Math.random() < 0.15) {
+                            if (enemy.ability === EnemyAbility.SHIELD && enemy.isShielded) return 'attack';
+                            return enemy.ability;
+                        }
+                        return 'attack';
+                }
+            };
+
             for (let i = 0; i < enemies.length; i++) {
                  if (state.enemies[i].hp > 0 && currentHp > 0) { 
                     await new Promise(resolve => setTimeout(resolve, 1000));
@@ -233,11 +397,11 @@ const App: React.FC = () => {
                         appendToLog(`${enemy.name}'s shield fades.`);
                     }
                     
-                    const willUseAbility = enemy.ability && Math.random() < 0.35;
+                    const actionToTake = determineEnemyAction(enemy);
 
-                    if (willUseAbility && enemy.ability) {
-                         appendToLog(`${enemy.name} uses ${enemy.ability}!`);
-                        switch (enemy.ability) {
+                    if (actionToTake !== 'attack' && actionToTake !== null) {
+                         appendToLog(`${enemy.name} uses ${actionToTake}!`);
+                        switch (actionToTake) {
                             case EnemyAbility.HEAL:
                                 const healAmount = Math.floor(enemy.maxHp * 0.25); // Heal for 25%
                                 dispatch({ type: 'ENEMY_ACTION_HEAL', payload: { enemyIndex: i, healAmount } });
@@ -305,10 +469,24 @@ const App: React.FC = () => {
     
     // Effect to generate the next scene after combat state has been fully updated
     useEffect(() => {
-        if (isGeneratingPostCombatScene) {
-            // `player` from state is now up-to-date with XP, loot, and level-ups
-            generateScene(player).then(({ description, actions, foundItem }) => {
-                dispatch({ type: 'SET_SCENE', payload: { description, actions } });
+        if (isGeneratingPostCombatScene && worldData && playerLocationId) {
+            const currentLocation = worldData.locations.find(l => l.id === playerLocationId);
+            if (!currentLocation) return;
+
+            generateScene(player, currentLocation).then(({ description, actions: localActions, foundItem }) => {
+                const moveActions = worldData.connections
+                        .filter(c => c.from === playerLocationId || c.to === playerLocationId)
+                        .map(c => {
+                            const targetId = c.from === playerLocationId ? c.to : c.from;
+                            const targetLocation = worldData.locations.find(l => l.id === targetId);
+                            return {
+                                label: `Go to ${targetLocation?.name || '???' }`,
+                                type: 'move' as const,
+                                targetLocationId: targetId
+                            };
+                        });
+
+                dispatch({ type: 'SET_SCENE', payload: { description, actions: [...localActions, ...moveActions] } });
                 if (foundItem) handleFoundItem(foundItem);
                 dispatch({ type: 'SET_ENEMIES', payload: [] });
                 dispatch({ type: 'SET_GAME_STATE', payload: GameState.EXPLORING });
@@ -316,19 +494,33 @@ const App: React.FC = () => {
                 setIsGeneratingPostCombatScene(false);
             });
         }
-    }, [isGeneratingPostCombatScene, player, handleFoundItem]);
+    }, [isGeneratingPostCombatScene, player, handleFoundItem, worldData, playerLocationId]);
 
     // Effect to generate the next scene after a social encounter
     useEffect(() => {
-        if (isGeneratingPostSocialScene) {
-            generateScene(player).then(({ description, actions, foundItem }) => {
-                dispatch({ type: 'SET_SCENE', payload: { description, actions } });
+        if (isGeneratingPostSocialScene && worldData && playerLocationId) {
+            const currentLocation = worldData.locations.find(l => l.id === playerLocationId);
+            if (!currentLocation) return;
+            
+            generateScene(player, currentLocation).then(({ description, actions: localActions, foundItem }) => {
+                 const moveActions = worldData.connections
+                        .filter(c => c.from === playerLocationId || c.to === playerLocationId)
+                        .map(c => {
+                            const targetId = c.from === playerLocationId ? c.to : c.from;
+                            const targetLocation = worldData.locations.find(l => l.id === targetId);
+                            return {
+                                label: `Go to ${targetLocation?.name || '???' }`,
+                                type: 'move' as const,
+                                targetLocationId: targetId
+                            };
+                        });
+                dispatch({ type: 'SET_SCENE', payload: { description, actions: [...localActions, ...moveActions] } });
                 if (foundItem) handleFoundItem(foundItem);
                 dispatch({ type: 'SET_GAME_STATE', payload: GameState.EXPLORING });
                 setIsGeneratingPostSocialScene(false);
             });
         }
-    }, [isGeneratingPostSocialScene, player, handleFoundItem]);
+    }, [isGeneratingPostSocialScene, player, handleFoundItem, worldData, playerLocationId]);
     
     const renderGameContent = () => {
         switch (gameState) {
@@ -369,6 +561,12 @@ const App: React.FC = () => {
                 inventory={player.inventory}
                 onUseItem={handleUseItem}
                 disabled={!isPlayerTurn && gameState === GameState.COMBAT}
+            />
+            <WorldMapView
+                isOpen={isMapOpen}
+                onClose={() => setIsMapOpen(false)}
+                worldData={worldData}
+                playerLocationId={playerLocationId}
             />
             <div className="max-w-7xl mx-auto h-full bg-black/30 rounded-2xl border-4 border-gray-700 shadow-2xl p-4 flex flex-col relative">
                 {showLevelUp && (
@@ -426,20 +624,27 @@ const App: React.FC = () => {
                     
                     {/* Actions Panel */}
                      {!isScreenState && (
-                        <div className="md:col-span-1 flex flex-col items-center justify-center gap-2 order-3">
-                            {(gameState === GameState.EXPLORING || gameState === GameState.COMBAT) && (
-                                <button onClick={() => setIsInventoryOpen(true)} className="w-full text-lg bg-purple-700 hover:bg-purple-600 disabled:bg-purple-900 disabled:cursor-not-allowed text-white font-bold py-3 px-4 rounded-lg border-2 border-purple-500 transition-all duration-200 transform hover:scale-105" disabled={!isPlayerTurn && gameState === GameState.COMBAT}>
-                                    Inventory
-                                </button>
-                            )}
-                            {gameState === GameState.EXPLORING && (
-                                <button onClick={saveGame} className="w-full flex items-center justify-center gap-2 text-lg bg-indigo-700 hover:bg-indigo-600 text-white font-bold py-3 px-4 rounded-lg border-2 border-indigo-500 transition-all duration-200 transform hover:scale-105">
-                                    <SaveIcon /> Save Game
-                                </button>
-                            )}
-                            {gameState === GameState.COMBAT && !isPlayerTurn && (
-                                <div className="text-center text-yellow-400 font-press-start animate-pulse">Enemy Turn...</div>
-                            )}
+                        <div className="md:col-span-1 flex flex-col items-center justify-start gap-2 order-3 pt-4">
+                            <div className="w-full space-y-2">
+                                {(gameState === GameState.EXPLORING || gameState === GameState.COMBAT) && (
+                                    <button onClick={() => setIsInventoryOpen(true)} className="w-full text-lg bg-purple-700 hover:bg-purple-600 disabled:bg-purple-900 disabled:cursor-not-allowed text-white font-bold py-3 px-4 rounded-lg border-2 border-purple-500 transition-all duration-200 transform hover:scale-105" disabled={!isPlayerTurn && gameState === GameState.COMBAT}>
+                                        Inventory
+                                    </button>
+                                )}
+                                {gameState === GameState.EXPLORING && (
+                                    <>
+                                        <button onClick={() => setIsMapOpen(true)} className="w-full flex items-center justify-center gap-2 text-lg bg-teal-700 hover:bg-teal-600 text-white font-bold py-3 px-4 rounded-lg border-2 border-teal-500 transition-all duration-200 transform hover:scale-105">
+                                           <MapIcon/> Map
+                                        </button>
+                                        <button onClick={saveGame} className="w-full flex items-center justify-center gap-2 text-lg bg-indigo-700 hover:bg-indigo-600 text-white font-bold py-3 px-4 rounded-lg border-2 border-indigo-500 transition-all duration-200 transform hover:scale-105">
+                                            <SaveIcon /> Save Game
+                                        </button>
+                                    </>
+                                )}
+                                {gameState === GameState.COMBAT && !isPlayerTurn && (
+                                    <div className="text-center text-yellow-400 font-press-start animate-pulse">Enemy Turn...</div>
+                                )}
+                            </div>
                         </div>
                      )}
                 </div>

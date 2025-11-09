@@ -25,6 +25,13 @@ export enum EnemyAbility {
   DRAIN_LIFE = 'DRAIN_LIFE',
 }
 
+export enum AIPersonality {
+  AGGRESSIVE = 'AGGRESSIVE',
+  DEFENSIVE = 'DEFENSIVE',
+  STRATEGIC = 'STRATEGIC',
+  WILD = 'WILD',
+}
+
 export interface Item {
   name: string;
   description: string;
@@ -60,12 +67,14 @@ export interface Enemy {
   attack: number;
   loot?: Omit<Item, 'quantity'>;
   ability?: EnemyAbility;
+  aiPersonality?: AIPersonality;
   isShielded?: boolean;
 }
 
 export interface GameAction {
   label: string;
-  type: 'explore' | 'rest' | 'encounter' | 'social';
+  type: 'explore' | 'rest' | 'encounter' | 'social' | 'move';
+  targetLocationId?: string; // for 'move' type
 }
 
 // --- Social Encounter ---
@@ -91,12 +100,35 @@ export interface SocialEncounter {
     choices: SocialChoice[];
 }
 
+// --- World Map ---
+export interface MapLocation {
+    id: string;
+    name: string;
+    description: string;
+    x: number; // 0-100 percentage
+    y: number; // 0-100 percentage
+    isExplored: boolean;
+}
+
+export interface Connection {
+    from: string; // location id
+    to: string; // location id
+}
+
+export interface WorldData {
+    image: string; // base64 encoded image
+    locations: MapLocation[];
+    connections: Connection[];
+    startLocationId: string;
+}
 
 export interface SaveData {
     player: Player;
     storyText: string;
     actions: GameAction[];
     log: string[];
+    worldData: WorldData;
+    playerLocationId: string;
 }
 
 
@@ -111,6 +143,8 @@ export interface AppState {
   log: string[];
   isPlayerTurn: boolean;
   socialEncounter: SocialEncounter | null;
+  worldData: WorldData | null;
+  playerLocationId: string | null;
 }
 
 export type Action =
@@ -135,4 +169,6 @@ export type Action =
   | { type: 'ENEMY_ACTION_DRAIN_LIFE', payload: { enemyIndex: number; damage: number } }
   | { type: 'ENEMY_ACTION_SHIELD'; payload: { enemyIndex: number } }
   | { type: 'SET_SOCIAL_ENCOUNTER'; payload: SocialEncounter }
-  | { type: 'RESOLVE_SOCIAL_CHOICE'; payload: { choice: SocialChoice } };
+  | { type: 'RESOLVE_SOCIAL_CHOICE'; payload: { choice: SocialChoice } }
+  | { type: 'SET_WORLD_DATA'; payload: WorldData }
+  | { type: 'MOVE_PLAYER'; payload: string }; // payload is targetLocationId

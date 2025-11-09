@@ -1,4 +1,4 @@
-import { AppState, Action, GameState, Item, Player, CharacterClass, Enemy, RewardType, SocialChoice } from '../types';
+import { AppState, Action, GameState, Item, Player, CharacterClass, Enemy, RewardType, SocialChoice, MapLocation } from '../types';
 import { initialState } from './initialState';
 import { CLASS_STATS } from '../constants';
 
@@ -86,6 +86,8 @@ export const reducer = (state: AppState, action: Action): AppState => {
             ...state,
             player: startingPlayer,
             gameState: GameState.LOADING,
+            worldData: null,
+            playerLocationId: null,
             log: [`The adventure of ${name} the ${characterClass} begins...`],
         };
     }
@@ -97,6 +99,8 @@ export const reducer = (state: AppState, action: Action): AppState => {
         storyText: action.payload.storyText,
         actions: action.payload.actions,
         log: appendToLog(action.payload.log, 'Game Loaded.'),
+        worldData: action.payload.worldData,
+        playerLocationId: action.payload.playerLocationId,
         enemies: [],
         gameState: GameState.EXPLORING,
       };
@@ -112,6 +116,34 @@ export const reducer = (state: AppState, action: Action): AppState => {
     
     case 'SET_ENEMIES':
         return { ...state, enemies: action.payload };
+
+    case 'SET_WORLD_DATA': {
+        const worldData = action.payload;
+        const startingLocationIndex = worldData.locations.findIndex(l => l.id === worldData.startLocationId);
+        if (startingLocationIndex !== -1) {
+            worldData.locations[startingLocationIndex].isExplored = true;
+        }
+        return {
+            ...state,
+            worldData: worldData,
+            playerLocationId: worldData.startLocationId,
+        };
+    }
+
+    case 'MOVE_PLAYER': {
+        if (!state.worldData) return state;
+        const newWorldData = JSON.parse(JSON.stringify(state.worldData));
+        // FIX: Corrected type annotation from Enemy to MapLocation.
+        const newLocationIndex = newWorldData.locations.findIndex((l: MapLocation) => l.id === action.payload);
+        if (newLocationIndex !== -1) {
+            newWorldData.locations[newLocationIndex].isExplored = true;
+        }
+        return {
+            ...state,
+            worldData: newWorldData,
+            playerLocationId: action.payload,
+        };
+    }
 
     case 'UPDATE_PLAYER':
         return { ...state, player: { ...state.player, ...action.payload } };
