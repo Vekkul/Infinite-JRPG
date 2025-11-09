@@ -133,7 +133,6 @@ export const reducer = (state: AppState, action: Action): AppState => {
     case 'MOVE_PLAYER': {
         if (!state.worldData) return state;
         const newWorldData = JSON.parse(JSON.stringify(state.worldData));
-        // FIX: Corrected type annotation from Enemy to MapLocation.
         const newLocationIndex = newWorldData.locations.findIndex((l: MapLocation) => l.id === action.payload);
         if (newLocationIndex !== -1) {
             newWorldData.locations[newLocationIndex].isExplored = true;

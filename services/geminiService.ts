@@ -277,7 +277,6 @@ export const generateCharacterPortrait = async (description: string, characterCl
                 ],
             },
             config: {
-// FIX: Removed unsupported temperature parameter for image generation model.
                 responseModalities: [Modality.IMAGE],
             },
         });
@@ -298,11 +297,10 @@ export const generateCharacterPortrait = async (description: string, characterCl
 
 export const generateWorldData = async (): Promise<WorldData | null> => {
     try {
-        // FIX: Separated world data generation (JSON) and world map generation (image) into two API calls.
         // Step 1: Generate the structured world data (locations, connections)
         const worldDataResponse = await ai.models.generateContent({
             model: 'gemini-2.5-flash',
-            contents: `Generate a JSON object that follows the provided schema to describe a fantasy JRPG world with 6 to 8 locations. The world should have diverse biomes like lush forests, snowy mountains, a small village, a large castle, and a coastline. The locations must form a single connected graph.`,
+            contents: `Generate a JSON object that follows the provided schema to describe a fantasy JRPG world with 6 to 8 locations. The world MUST include a starting village named 'Oakhaven'. Set its ID to 'oakhaven' and designate it as the 'startLocationId'. The rest of the world should have diverse biomes like lush forests, snowy mountains, a large castle, and a coastline. Ensure all locations form a single connected graph.`,
             config: {
                 systemInstruction: SYSTEM_INSTRUCTION,
                 responseMimeType: "application/json",
@@ -321,7 +319,7 @@ export const generateWorldData = async (): Promise<WorldData | null> => {
             contents: {
                 parts: [
                     {
-                        text: `Generate a top-down, 16-bit pixel art style JRPG world map. The map should visually represent a world containing these locations: ${locationDescriptions}. Feature diverse biomes like forests, mountains, villages, castles, and coastlines. Do not include any text, icons, or UI elements on the map itself.`,
+                        text: `Generate a top-down, 16-bit pixel art style JRPG world map. The map should visually represent a world containing these locations: ${locationDescriptions}. Feature diverse biomes like forests, mountains, villages, castles, and coastlines. IMPORTANT: The map image must be clean and contain absolutely no text, no labels, no icons, and no UI elements. It is a background image only.`,
                     },
                 ],
             },
