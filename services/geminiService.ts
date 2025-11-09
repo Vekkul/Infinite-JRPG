@@ -17,6 +17,29 @@ const itemSchema = {
     required: ["name", "description", "type", "value", "stackLimit"]
 };
 
+const exploreResultSchema = {
+    type: Type.OBJECT,
+    properties: {
+        outcome: {
+            type: Type.STRING,
+            description: "A vivid, fantasy JRPG-style description of what happens as a result of the player's action. Max 80 words. Be creative and contextually appropriate. This text will become the new main story text."
+        },
+        foundItem: {
+            ...itemSchema,
+            description: "An item the player finds. Optional, include it about 30% of the time for 'search' or 'investigate' type actions. Omit otherwise."
+        },
+        triggerCombat: {
+            type: Type.BOOLEAN,
+            description: "Set to true ONLY if this action directly and logically leads to a combat encounter (e.g., 'Kick the hornet nest'). Should be false for most actions like 'Read a book'."
+        },
+        triggerSocial: {
+            type: Type.BOOLEAN,
+            description: "Set to true if this action leads to a social, non-combat encounter with an NPC."
+        }
+    },
+    required: ["outcome", "triggerCombat", "triggerSocial"]
+};
+
 const sceneSchema = {
     type: Type.OBJECT,
     properties: {
@@ -160,8 +183,41 @@ const worldDataSchema = {
     required: ["locations", "connections", "startLocationId"]
 };
 
+export const generateExploreResult = async (player: Player, action: GameAction): Promise<{ outcome: string; foundItem?: Omit<Item, 'quantity'>; triggerCombat: boolean; triggerSocial: boolean; isFallback?: boolean; }> => {
+    try {
+        const response = await ai.models.generateContent({
+            model: "gemini-2.5-flash",
+            contents: `The player, a level ${player.level} ${player.class}, decided to perform the action: "${action.label}". Generate a contextually appropriate outcome. The action should not always lead to combat; for example, reading a sign should provide information, not start a fight. The outcome description will replace the current scene text.`,
+            config: {
+                systemInstruction: SYSTEM_INSTRUCTION,
+                responseMimeType: "application/json",
+                responseSchema: exploreResultSchema,
+                temperature: 0.9,
+            },
+        });
 
-export const generateScene = async (player: Player, location: MapLocation): Promise<{ description: string; actions: GameAction[]; foundItem?: Omit<Item, 'quantity'>; }> => {
+        const data = JSON.parse(response.text);
+
+        return {
+            outcome: data.outcome,
+            foundItem: data.foundItem,
+            triggerCombat: data.triggerCombat || false,
+            triggerSocial: data.triggerSocial || false,
+        };
+
+    } catch (error) {
+        console.error("Error generating explore result:", error);
+        // Fallback result
+        return {
+            outcome: "You cautiously proceed, but find nothing of interest. The path ahead remains.",
+            triggerCombat: false,
+            triggerSocial: false,
+            isFallback: true,
+        };
+    }
+};
+
+export const generateScene = async (player: Player, location: MapLocation): Promise<{ description: string; actions: GameAction[]; foundItem?: Omit<Item, 'quantity'>; isFallback?: boolean; }> => {
     try {
         const response = await ai.models.generateContent({
             model: "gemini-2.5-flash",
@@ -190,11 +246,12 @@ export const generateScene = async (player: Player, location: MapLocation): Prom
                 { label: "Search the area", type: "explore" },
                 { label: "Listen for danger", type: "encounter" },
             ],
+            isFallback: true,
         };
     }
 };
 
-export const generateEncounter = async (player: Player): Promise<Enemy[]> => {
+export const generateEncounter = async (player: Player): Promise<{ enemies: Enemy[]; isFallback?: boolean; }> => {
      try {
         const numMonsters = Math.floor(Math.random() * 3) + 1; // 1, 2, or 3
 
@@ -213,25 +270,28 @@ export const generateEncounter = async (player: Player): Promise<Enemy[]> => {
         if (!Array.isArray(data) || data.length === 0) {
             throw new Error("Invalid response format from API");
         }
-        return data.map(enemy => ({ ...enemy, maxHp: enemy.hp, isShielded: false }));
+        return { enemies: data.map(enemy => ({ ...enemy, maxHp: enemy.hp, isShielded: false })) };
     } catch (error) {
         console.error("Error generating encounter:", error);
         // Fallback enemy
         const hp = player.level * 20;
         const attack = player.level * 4;
-        return [{
-            name: "Slime",
-            description: "A basic, gelatinous creature. It jiggles menacingly.",
-            hp: hp,
-            maxHp: hp,
-            attack: attack,
-            isShielded: false,
-            aiPersonality: AIPersonality.AGGRESSIVE,
-        }];
+        return {
+            enemies: [{
+                name: "Slime",
+                description: "A basic, gelatinous creature. It jiggles menacingly.",
+                hp: hp,
+                maxHp: hp,
+                attack: attack,
+                isShielded: false,
+                aiPersonality: AIPersonality.AGGRESSIVE,
+            }],
+            isFallback: true,
+        };
     }
 };
 
-export const generateSocialEncounter = async (player: Player): Promise<SocialEncounter> => {
+export const generateSocialEncounter = async (player: Player): Promise<{ encounter: SocialEncounter; isFallback?: boolean; }> => {
     try {
         const response = await ai.models.generateContent({
             model: "gemini-2.5-flash",
@@ -243,29 +303,32 @@ export const generateSocialEncounter = async (player: Player): Promise<SocialEnc
                 temperature: 1.0,
             },
         });
-        return JSON.parse(response.text) as SocialEncounter;
+        return { encounter: JSON.parse(response.text) as SocialEncounter };
     } catch (error)
         {
         console.error("Error generating social encounter:", error);
         // Fallback social encounter
         return {
-            description: "You come across an old merchant whose cart has a broken wheel. He looks at you with weary eyes.",
-            choices: [
-                {
-                    label: "Help him fix the wheel.",
-                    outcome: "You spend some time helping the merchant. Grateful, he thanks you for your kindness.",
-                    reward: { type: RewardType.XP, value: 30 }
-                },
-                {
-                    label: "Ignore him and continue.",
-                    outcome: "You decide you don't have time to help and continue on your journey down the path."
-                }
-            ]
+            encounter: {
+                description: "You come across an old merchant whose cart has a broken wheel. He looks at you with weary eyes.",
+                choices: [
+                    {
+                        label: "Help him fix the wheel.",
+                        outcome: "You spend some time helping the merchant. Grateful, he thanks you for your kindness.",
+                        reward: { type: RewardType.XP, value: 30 }
+                    },
+                    {
+                        label: "Ignore him and continue.",
+                        outcome: "You decide you don't have time to help and continue on your journey down the path."
+                    }
+                ]
+            },
+            isFallback: true,
         };
     }
 };
 
-export const generateCharacterPortrait = async (description: string, characterClass: CharacterClass): Promise<string> => {
+export const generateCharacterPortrait = async (description: string, characterClass: CharacterClass): Promise<{ portrait: string; isFallback?: boolean; }> => {
     try {
         const response = await ai.models.generateContent({
             model: 'gemini-2.5-flash-image',
@@ -283,7 +346,7 @@ export const generateCharacterPortrait = async (description: string, characterCl
 
         for (const part of response.candidates[0].content.parts) {
             if (part.inlineData) {
-                return part.inlineData.data;
+                return { portrait: part.inlineData.data };
             }
         }
         throw new Error("No image data found in response.");
@@ -291,7 +354,7 @@ export const generateCharacterPortrait = async (description: string, characterCl
     } catch (error) {
         console.error("Error generating character portrait:", error);
         // In case of an error, we'll return an empty string. The UI can handle this.
-        return "";
+        return { portrait: "", isFallback: true };
     }
 };
 

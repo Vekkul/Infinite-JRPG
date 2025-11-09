@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef, useReducer } from 'react';
 import { GameState, Player, Enemy, GameAction, Item, ItemType, SaveData, CharacterClass, EnemyAbility, SocialChoice, AIPersonality } from './types';
-import { generateScene, generateEncounter, generateSocialEncounter, generateWorldData } from './services/geminiService';
+import { generateScene, generateEncounter, generateSocialEncounter, generateWorldData, generateExploreResult } from './services/geminiService';
 import { Inventory } from './components/Inventory';
 import { reducer } from './state/reducer';
 import { initialState } from './state/initialState';
@@ -14,10 +14,7 @@ import { SocialEncounterView } from './components/views/SocialEncounterView';
 import { WorldMapView } from './components/views/WorldMapView';
 import { StatusBar } from './components/StatusBar';
 import { HeartIcon, StarIcon, SaveIcon, BoltIcon, FireIcon, MapIcon } from './components/icons';
-
-const SAVE_KEY = 'jrpgSaveDataV2';
-const CRIT_CHANCE = 0.1;
-const CRIT_MULTIPLIER = 1.5;
+import { JRPG_SAVE_KEY, CRIT_CHANCE, CRIT_MULTIPLIER, FLEE_CHANCE, TRAVEL_ENCOUNTER_CHANCE } from './constants';
 
 const App: React.FC = () => {
     const [state, dispatch] = useReducer(reducer, initialState);
@@ -38,7 +35,7 @@ const App: React.FC = () => {
     const prevPlayerLocationId = useRef<string | null>(null);
 
     useEffect(() => {
-        const savedData = localStorage.getItem(SAVE_KEY);
+        const savedData = localStorage.getItem(JRPG_SAVE_KEY);
         setSaveFileExists(!!savedData);
     }, []);
 
@@ -60,6 +57,10 @@ const App: React.FC = () => {
     const appendToLog = useCallback((message: string) => {
         dispatch({ type: 'ADD_LOG', payload: message });
     }, []);
+
+    const handleFallback = useCallback(() => {
+        appendToLog('A strange energy interferes with your perception...');
+    }, [appendToLog]);
     
     const handleFoundItem = useCallback((itemDef: Omit<Item, 'quantity'>) => {
         appendToLog(`You found a ${itemDef.name}!`);
@@ -84,8 +85,10 @@ const App: React.FC = () => {
         const startLocation = newWorldData.locations.find(l => l.id === newWorldData.startLocationId);
         if (startLocation) {
             const tempPlayer = { ...initialState.player, name: details.name, class: details.class, portrait: details.portrait };
-            const scene = await generateScene(tempPlayer, startLocation);
+            const { description, actions, foundItem, isFallback } = await generateScene(tempPlayer, startLocation);
             
+            if (isFallback) handleFallback();
+
             const moveActions = newWorldData.connections
                 .filter(c => c.from === startLocation.id || c.to === startLocation.id)
                 .map(c => {
@@ -97,27 +100,27 @@ const App: React.FC = () => {
                         targetLocationId: targetId
                     };
                 });
-            const allActions = [...scene.actions, ...moveActions];
+            const allActions = [...actions, ...moveActions];
 
-            dispatch({ type: 'SET_SCENE', payload: { description: scene.description, actions: allActions } });
-            if (scene.foundItem) {
-                handleFoundItem(scene.foundItem);
+            dispatch({ type: 'SET_SCENE', payload: { description: description, actions: allActions } });
+            if (foundItem) {
+                handleFoundItem(foundItem);
             }
         }
         dispatch({ type: 'SET_GAME_STATE', payload: GameState.EXPLORING });
 
-    }, [handleFoundItem, appendToLog]);
+    }, [handleFoundItem, appendToLog, handleFallback]);
 
     const saveGame = useCallback(() => {
         if (!worldData || !playerLocationId) return;
         const saveData: SaveData = { player, storyText, actions, log, worldData, playerLocationId };
-        localStorage.setItem(SAVE_KEY, JSON.stringify(saveData));
+        localStorage.setItem(JRPG_SAVE_KEY, JSON.stringify(saveData));
         setSaveFileExists(true);
         appendToLog('Game Saved!');
     }, [player, storyText, actions, log, worldData, playerLocationId, appendToLog]);
 
     const loadGame = useCallback(() => {
-        const savedDataString = localStorage.getItem(SAVE_KEY);
+        const savedDataString = localStorage.getItem(JRPG_SAVE_KEY);
         if (savedDataString) {
             const savedData: SaveData = JSON.parse(savedDataString);
             dispatch({ type: 'LOAD_GAME', payload: savedData });
@@ -129,56 +132,70 @@ const App: React.FC = () => {
     const handleAction = useCallback(async (action: GameAction) => {
         if (action.type === 'move' && action.targetLocationId) {
             dispatch({ type: 'MOVE_PLAYER', payload: action.targetLocationId });
-        } else {
-            dispatch({ type: 'SET_GAME_STATE', payload: GameState.LOADING });
-            appendToLog(`You decide to ${action.label.toLowerCase()}...`);
-
-            if (action.type === 'rest') {
-                const healAmount = Math.floor(player.maxHp * 0.5);
-                const newHp = Math.min(player.maxHp, player.hp + healAmount);
-                const healed = newHp - player.hp;
-                if (healed > 0) {
-                     dispatch({ type: 'UPDATE_PLAYER', payload: { hp: newHp } });
-                     appendToLog(`You rest and recover ${healed} HP.`);
-                } else {
-                    appendToLog(`You are already at full health.`);
-                }
-               
-                 const currentLocation = worldData?.locations.find(l => l.id === playerLocationId);
-                 if (currentLocation) {
-                    const { description, actions: localActions, foundItem } = await generateScene(player, currentLocation);
+            return;
+        }
+    
+        dispatch({ type: 'SET_GAME_STATE', payload: GameState.LOADING });
+        appendToLog(`You decide to ${action.label.toLowerCase()}...`);
+    
+        if (action.type === 'encounter') {
+            const { enemies: newEnemies, isFallback } = await generateEncounter(player);
+            if (isFallback) handleFallback();
+            const enemyNames = newEnemies.map(e => e.name).join(', ');
+            dispatch({ type: 'SET_ENEMIES', payload: newEnemies });
+            dispatch({ type: 'SET_SCENE', payload: { description: `A wild ${enemyNames} appeared!`, actions: [] } });
+            appendToLog(newEnemies.length > 0 ? newEnemies[0].description : 'A mysterious force blocks your way.');
+            dispatch({ type: 'SET_GAME_STATE', payload: GameState.COMBAT });
+            dispatch({ type: 'SET_PLAYER_TURN', payload: true });
+        } else if (action.type === 'explore') {
+            const result = await generateExploreResult(player, action);
+            if (result.isFallback) handleFallback();
+            appendToLog(result.outcome);
+    
+            if (result.foundItem) {
+                handleFoundItem(result.foundItem);
+            }
+    
+            if (result.triggerCombat) {
+                const { enemies: newEnemies, isFallback } = await generateEncounter(player);
+                if (isFallback) handleFallback();
+                const enemyNames = newEnemies.map(e => e.name).join(', ');
+                dispatch({ type: 'SET_ENEMIES', payload: newEnemies });
+                dispatch({ type: 'SET_SCENE', payload: { description: `${result.outcome} Suddenly, a ${enemyNames} attacks!`, actions: [] } });
+                appendToLog(newEnemies.length > 0 ? newEnemies[0].description : 'An unseen foe strikes!');
+                dispatch({ type: 'SET_GAME_STATE', payload: GameState.COMBAT });
+                dispatch({ type: 'SET_PLAYER_TURN', payload: true });
+            } else if (result.triggerSocial) {
+                const { encounter: socialEncounter, isFallback } = await generateSocialEncounter(player);
+                if (isFallback) handleFallback();
+                // Combine outcome with social encounter description for context
+                socialEncounter.description = `${result.outcome} ${socialEncounter.description}`;
+                dispatch({ type: 'SET_SOCIAL_ENCOUNTER', payload: socialEncounter });
+            } else {
+                // Narrative only. Regenerate the scene with the new outcome as description.
+                const currentLocation = worldData?.locations.find(l => l.id === playerLocationId);
+                if (currentLocation) {
+                    const { actions: localActions, foundItem, isFallback } = await generateScene(player, currentLocation);
+                    if(isFallback) handleFallback();
                     
                     const moveActions = worldData.connections
                         .filter(c => c.from === playerLocationId || c.to === playerLocationId)
                         .map(c => {
                             const targetId = c.from === playerLocationId ? c.to : c.from;
                             const targetLocation = worldData.locations.find(l => l.id === targetId);
-                            return {
-                                label: `Go to ${targetLocation?.name || '???' }`,
-                                type: 'move' as const,
-                                targetLocationId: targetId
-                            };
+                            return { label: `Go to ${targetLocation?.name || '???' }`, type: 'move' as const, targetLocationId: targetId };
                         });
-                    dispatch({ type: 'SET_SCENE', payload: { description, actions: [...localActions, ...moveActions] } });
-
-                    if (foundItem) handleFoundItem(foundItem);
-                 }
+    
+                    dispatch({ type: 'SET_SCENE', payload: { description: result.outcome, actions: [...localActions, ...moveActions] } });
+    
+                    if (foundItem) {
+                        handleFoundItem(foundItem);
+                    }
+                }
                 dispatch({ type: 'SET_GAME_STATE', payload: GameState.EXPLORING });
-            } else if (action.type === 'social') {
-                const encounter = await generateSocialEncounter(player);
-                dispatch({ type: 'SET_SOCIAL_ENCOUNTER', payload: encounter });
-            }
-            else { // explore or encounter
-                const newEnemies = await generateEncounter(player);
-                const enemyNames = newEnemies.map(e => e.name).join(', ');
-                dispatch({ type: 'SET_ENEMIES', payload: newEnemies });
-                dispatch({ type: 'SET_SCENE', payload: { description: `A wild ${enemyNames} appeared!`, actions: [] } });
-                appendToLog(newEnemies.length > 0 ? newEnemies[0].description : 'A mysterious force blocks your way.');
-                dispatch({ type: 'SET_GAME_STATE', payload: GameState.COMBAT });
-                dispatch({ type: 'SET_PLAYER_TURN', payload: true });
             }
         }
-    }, [player, appendToLog, handleFoundItem, worldData, playerLocationId]);
+    }, [player, appendToLog, handleFoundItem, worldData, playerLocationId, handleFallback]);
 
     // This effect handles the logic for moving between locations.
     useEffect(() => {
@@ -207,9 +224,9 @@ const App: React.FC = () => {
                     
                     appendToLog(`You travel to ${newLocation.name}...`);
                     
-                    const encounterChance = 0.5;
-                    if (Math.random() < encounterChance) {
-                        const newEnemies = await generateEncounter(player);
+                    if (Math.random() < TRAVEL_ENCOUNTER_CHANCE) {
+                        const { enemies: newEnemies, isFallback } = await generateEncounter(player);
+                        if (isFallback) handleFallback();
                         const enemyNames = newEnemies.map(e => e.name).join(', ');
                         dispatch({ type: 'SET_ENEMIES', payload: newEnemies });
                         dispatch({ type: 'SET_SCENE', payload: { description: `While traveling to ${newLocation.name}, you are ambushed by a ${enemyNames}!`, actions: [] } });
@@ -217,7 +234,8 @@ const App: React.FC = () => {
                         dispatch({ type: 'SET_GAME_STATE', payload: GameState.COMBAT });
                         dispatch({ type: 'SET_PLAYER_TURN', payload: true });
                     } else {
-                        const { description, actions: localActions, foundItem } = await generateScene(player, newLocation);
+                        const { description, actions: localActions, foundItem, isFallback } = await generateScene(player, newLocation);
+                        if (isFallback) handleFallback();
                          const moveActions = worldData.connections
                             .filter(c => c.from === playerLocationId || c.to === playerLocationId)
                             .map(c => {
@@ -237,7 +255,7 @@ const App: React.FC = () => {
                 move();
             }
         }
-    }, [playerLocationId, worldData, player, appendToLog, handleFoundItem]);
+    }, [playerLocationId, worldData, player, appendToLog, handleFoundItem, handleFallback]);
 
     const handleUseItem = useCallback((item: Item, index: number) => {
         if (item.type === ItemType.POTION) {
@@ -290,11 +308,12 @@ const App: React.FC = () => {
         } else if (action === 'defend') {
             dispatch({ type: 'PLAYER_ACTION_DEFEND' });
         } else if (action === 'flee') {
-            if (Math.random() > 0.4) {
+            if (Math.random() < FLEE_CHANCE) {
                 appendToLog('You successfully escaped!');
                 const currentLocation = worldData?.locations.find(l => l.id === playerLocationId);
                 if (currentLocation) {
-                    const { description, actions: localActions, foundItem } = await generateScene(player, currentLocation);
+                    const { description, actions: localActions, foundItem, isFallback } = await generateScene(player, currentLocation);
+                    if (isFallback) handleFallback();
                      const moveActions = worldData.connections
                         .filter(c => c.from === playerLocationId || c.to === playerLocationId)
                         .map(c => {
@@ -317,12 +336,137 @@ const App: React.FC = () => {
                 dispatch({ type: 'PLAYER_ACTION_FLEE_FAILURE' });
             }
         }
-    }, [player, enemies, appendToLog, handleFoundItem, isPlayerTurn, worldData, playerLocationId]);
+    }, [player, enemies, appendToLog, handleFoundItem, isPlayerTurn, worldData, playerLocationId, handleFallback]);
 
     const handleSocialChoice = useCallback((choice: SocialChoice) => {
         dispatch({ type: 'RESOLVE_SOCIAL_CHOICE', payload: { choice } });
         setIsGeneratingPostSocialScene(true);
     }, []);
+
+    const handleEnemyTurns = useCallback(async () => {
+        enemyTurnInProgress.current = true;
+        let currentHp = player.hp;
+
+        const determineEnemyAction = (enemy: Enemy): 'attack' | EnemyAbility | null => {
+            if (!enemy.ability) return 'attack';
+
+            const hpPercent = enemy.hp / enemy.maxHp;
+
+            switch (enemy.aiPersonality) {
+                case AIPersonality.DEFENSIVE:
+                    if (hpPercent < 0.5 && (enemy.ability === EnemyAbility.HEAL || enemy.ability === EnemyAbility.SHIELD)) {
+                        if (enemy.ability === EnemyAbility.SHIELD && enemy.isShielded) return 'attack'; // Don't shield if already shielded
+                        return enemy.ability;
+                    }
+                    return 'attack';
+
+                case AIPersonality.STRATEGIC:
+                    if (hpPercent < 0.3 && enemy.ability === EnemyAbility.HEAL) {
+                        return EnemyAbility.HEAL;
+                    }
+                    if (hpPercent < 0.7 && !enemy.isShielded && enemy.ability === EnemyAbility.SHIELD && Math.random() < 0.8) {
+                        return EnemyAbility.SHIELD;
+                    }
+                    if ((enemy.ability === EnemyAbility.DRAIN_LIFE || enemy.ability === EnemyAbility.MULTI_ATTACK) && Math.random() < 0.4) {
+                        return enemy.ability;
+                    }
+                    return 'attack';
+                
+                case AIPersonality.WILD:
+                    if (enemy.ability === EnemyAbility.SHIELD && enemy.isShielded) return 'attack';
+                    if (Math.random() < 0.5) {
+                        return enemy.ability;
+                    }
+                    return 'attack';
+
+                case AIPersonality.AGGRESSIVE:
+                default:
+                    if ((enemy.ability === EnemyAbility.DRAIN_LIFE || enemy.ability === EnemyAbility.MULTI_ATTACK) && Math.random() < 0.3) {
+                        return enemy.ability;
+                    }
+                    if ((enemy.ability === EnemyAbility.HEAL || enemy.ability === EnemyAbility.SHIELD) && Math.random() < 0.15) {
+                        if (enemy.ability === EnemyAbility.SHIELD && enemy.isShielded) return 'attack';
+                        return enemy.ability;
+                    }
+                    return 'attack';
+            }
+        };
+
+        for (let i = 0; i < enemies.length; i++) {
+                if (enemies[i].hp > 0 && currentHp > 0) { 
+                await new Promise(resolve => setTimeout(resolve, 1000));
+                
+                const enemy = enemies[i];
+                
+                if (enemy.isShielded) {
+                    dispatch({ type: 'UPDATE_ENEMY', payload: { index: i, data: { isShielded: false } } });
+                    appendToLog(`${enemy.name}'s shield fades.`);
+                }
+                
+                const actionToTake = determineEnemyAction(enemy);
+
+                if (actionToTake !== 'attack' && actionToTake !== null) {
+                        appendToLog(`${enemy.name} uses ${actionToTake}!`);
+                    switch (actionToTake) {
+                        case EnemyAbility.HEAL:
+                            const healAmount = Math.floor(enemy.maxHp * 0.25); // Heal for 25%
+                            dispatch({ type: 'ENEMY_ACTION_HEAL', payload: { enemyIndex: i, healAmount } });
+                            appendToLog(`${enemy.name} recovers ${healAmount} HP.`);
+                            break;
+                        case EnemyAbility.SHIELD:
+                            dispatch({ type: 'ENEMY_ACTION_SHIELD', payload: { enemyIndex: i } });
+                            appendToLog(`${enemy.name} raises a magical shield!`);
+                            break;
+                        case EnemyAbility.DRAIN_LIFE:
+                            const drainDamage = Math.floor(enemy.attack * 0.8 + (Math.random() * 4 - 2));
+                            const playerDamageTakenDrain = player.isDefending ? Math.max(1, Math.floor(drainDamage / 2)) : drainDamage;
+                            currentHp = Math.max(0, currentHp - playerDamageTakenDrain);
+                            dispatch({ type: 'UPDATE_PLAYER', payload: { hp: currentHp } });
+                            dispatch({type: 'ENEMY_ACTION_DRAIN_LIFE', payload: { enemyIndex: i, damage: playerDamageTakenDrain }})
+                            appendToLog(`${enemy.name} drains ${playerDamageTakenDrain} HP from you!`);
+                            break;
+                        case EnemyAbility.MULTI_ATTACK:
+                            for (let j=0; j<2; j++) {
+                                if(currentHp > 0) {
+                                    await new Promise(resolve => setTimeout(resolve, 500));
+                                    const multiDamage = Math.floor(enemy.attack * 0.7 + (Math.random() * 3 - 1));
+                                    const playerDamageTakenMulti = player.isDefending ? Math.max(1, Math.floor(multiDamage / 2)) : multiDamage;
+                                    currentHp = Math.max(0, currentHp - playerDamageTakenMulti);
+                                    dispatch({ type: 'UPDATE_PLAYER', payload: { hp: currentHp } });
+                                    appendToLog(`${enemy.name} strikes! You take ${playerDamageTakenMulti} damage.`);
+                                }
+                            }
+                            break;
+                    }
+                } else {
+                    // Handle attack
+                    const isCrit = Math.random() < CRIT_CHANCE;
+                    let enemyDamage = Math.floor(enemy.attack + (Math.random() * 4 - 2));
+                    if(isCrit) {
+                        enemyDamage = Math.floor(enemyDamage * CRIT_MULTIPLIER);
+                    }
+                    let playerDamageTaken = player.isDefending ? Math.max(1, Math.floor(enemyDamage / 2)) : enemyDamage;
+                    const newPlayerHp = Math.max(0, currentHp - playerDamageTaken);
+                    currentHp = newPlayerHp; // Update local HP tracker
+                    dispatch({ type: 'UPDATE_PLAYER', payload: { hp: newPlayerHp } });
+                    appendToLog(`${enemy.name} attacks! You take ${playerDamageTaken} damage. ${isCrit ? 'CRITICAL!' : ''}`);
+                }
+
+                if (currentHp <= 0) {
+                    dispatch({ type: 'SET_GAME_STATE', payload: GameState.GAME_OVER });
+                    appendToLog('You have been defeated...');
+                    enemyTurnInProgress.current = false;
+                    return; // Stop enemy turns if player is defeated
+                }
+            }
+        }
+        // After all enemies have acted
+        if (currentHp > 0) { // Check if player is still alive
+            dispatch({ type: 'SET_PLAYER_TURN', payload: true });
+        }
+        enemyTurnInProgress.current = false;
+
+    }, [enemies, player, appendToLog]);
     
     // Effect to check for victory or trigger enemy turn after player action
     useEffect(() => {
@@ -336,191 +480,58 @@ const App: React.FC = () => {
             return;
         }
 
-        // --- Enemy's turn logic ---
-        const runEnemyTurns = async () => {
-            enemyTurnInProgress.current = true;
-            let currentHp = player.hp;
-
-            const determineEnemyAction = (enemy: Enemy): 'attack' | EnemyAbility | null => {
-                if (!enemy.ability) return 'attack';
-
-                const hpPercent = enemy.hp / enemy.maxHp;
-
-                switch (enemy.aiPersonality) {
-                    case AIPersonality.DEFENSIVE:
-                        if (hpPercent < 0.5 && (enemy.ability === EnemyAbility.HEAL || enemy.ability === EnemyAbility.SHIELD)) {
-                            if (enemy.ability === EnemyAbility.SHIELD && enemy.isShielded) return 'attack'; // Don't shield if already shielded
-                            return enemy.ability;
-                        }
-                        return 'attack';
-
-                    case AIPersonality.STRATEGIC:
-                        if (hpPercent < 0.3 && enemy.ability === EnemyAbility.HEAL) {
-                            return EnemyAbility.HEAL;
-                        }
-                        if (hpPercent < 0.7 && !enemy.isShielded && enemy.ability === EnemyAbility.SHIELD && Math.random() < 0.8) {
-                            return EnemyAbility.SHIELD;
-                        }
-                        if ((enemy.ability === EnemyAbility.DRAIN_LIFE || enemy.ability === EnemyAbility.MULTI_ATTACK) && Math.random() < 0.4) {
-                            return enemy.ability;
-                        }
-                        return 'attack';
-                    
-                    case AIPersonality.WILD:
-                        if (enemy.ability === EnemyAbility.SHIELD && enemy.isShielded) return 'attack';
-                        if (Math.random() < 0.5) {
-                            return enemy.ability;
-                        }
-                        return 'attack';
-
-                    case AIPersonality.AGGRESSIVE:
-                    default:
-                        if ((enemy.ability === EnemyAbility.DRAIN_LIFE || enemy.ability === EnemyAbility.MULTI_ATTACK) && Math.random() < 0.3) {
-                            return enemy.ability;
-                        }
-                        if ((enemy.ability === EnemyAbility.HEAL || enemy.ability === EnemyAbility.SHIELD) && Math.random() < 0.15) {
-                            if (enemy.ability === EnemyAbility.SHIELD && enemy.isShielded) return 'attack';
-                            return enemy.ability;
-                        }
-                        return 'attack';
-                }
-            };
-
-            for (let i = 0; i < enemies.length; i++) {
-                 if (state.enemies[i].hp > 0 && currentHp > 0) { 
-                    await new Promise(resolve => setTimeout(resolve, 1000));
-                    
-                    const enemy = state.enemies[i];
-                    
-                    if (enemy.isShielded) {
-                        dispatch({ type: 'UPDATE_ENEMY', payload: { index: i, data: { isShielded: false } } });
-                        appendToLog(`${enemy.name}'s shield fades.`);
-                    }
-                    
-                    const actionToTake = determineEnemyAction(enemy);
-
-                    if (actionToTake !== 'attack' && actionToTake !== null) {
-                         appendToLog(`${enemy.name} uses ${actionToTake}!`);
-                        switch (actionToTake) {
-                            case EnemyAbility.HEAL:
-                                const healAmount = Math.floor(enemy.maxHp * 0.25); // Heal for 25%
-                                dispatch({ type: 'ENEMY_ACTION_HEAL', payload: { enemyIndex: i, healAmount } });
-                                appendToLog(`${enemy.name} recovers ${healAmount} HP.`);
-                                break;
-                            case EnemyAbility.SHIELD:
-                                dispatch({ type: 'ENEMY_ACTION_SHIELD', payload: { enemyIndex: i } });
-                                appendToLog(`${enemy.name} raises a magical shield!`);
-                                break;
-                            case EnemyAbility.DRAIN_LIFE:
-                                const drainDamage = Math.floor(enemy.attack * 0.8 + (Math.random() * 4 - 2));
-                                const playerDamageTakenDrain = player.isDefending ? Math.max(1, Math.floor(drainDamage / 2)) : drainDamage;
-                                currentHp = Math.max(0, currentHp - playerDamageTakenDrain);
-                                dispatch({ type: 'UPDATE_PLAYER', payload: { hp: currentHp } });
-                                dispatch({type: 'ENEMY_ACTION_DRAIN_LIFE', payload: { enemyIndex: i, damage: playerDamageTakenDrain }})
-                                appendToLog(`${enemy.name} drains ${playerDamageTakenDrain} HP from you!`);
-                                break;
-                            case EnemyAbility.MULTI_ATTACK:
-                                for (let j=0; j<2; j++) {
-                                    if(currentHp > 0) {
-                                        await new Promise(resolve => setTimeout(resolve, 500));
-                                        const multiDamage = Math.floor(enemy.attack * 0.7 + (Math.random() * 3 - 1));
-                                        const playerDamageTakenMulti = player.isDefending ? Math.max(1, Math.floor(multiDamage / 2)) : multiDamage;
-                                        currentHp = Math.max(0, currentHp - playerDamageTakenMulti);
-                                        dispatch({ type: 'UPDATE_PLAYER', payload: { hp: currentHp } });
-                                        appendToLog(`${enemy.name} strikes! You take ${playerDamageTakenMulti} damage.`);
-                                    }
-                                }
-                                break;
-                        }
-                    } else {
-                        // Handle attack
-                        const isCrit = Math.random() < CRIT_CHANCE;
-                        let enemyDamage = Math.floor(enemy.attack + (Math.random() * 4 - 2));
-                        if(isCrit) {
-                            enemyDamage = Math.floor(enemyDamage * CRIT_MULTIPLIER);
-                        }
-                        let playerDamageTaken = player.isDefending ? Math.max(1, Math.floor(enemyDamage / 2)) : enemyDamage;
-                        const newPlayerHp = Math.max(0, currentHp - playerDamageTaken);
-                        currentHp = newPlayerHp; // Update local HP tracker
-                        dispatch({ type: 'UPDATE_PLAYER', payload: { hp: newPlayerHp } });
-                        appendToLog(`${enemy.name} attacks! You take ${playerDamageTaken} damage. ${isCrit ? 'CRITICAL!' : ''}`);
-                    }
-
-                    if (currentHp <= 0) {
-                        dispatch({ type: 'SET_GAME_STATE', payload: GameState.GAME_OVER });
-                        appendToLog('You have been defeated...');
-                        enemyTurnInProgress.current = false;
-                        return; // Stop enemy turns if player is defeated
-                    }
-                }
-            }
-            // After all enemies have acted
-            if (currentHp > 0) { // Check if player is still alive
-                dispatch({ type: 'SET_PLAYER_TURN', payload: true });
-            }
-            enemyTurnInProgress.current = false;
-        };
-
         if (enemies.some(e => e.hp > 0)) {
-           runEnemyTurns();
+           handleEnemyTurns();
         }
 
-    }, [isPlayerTurn, enemies, gameState, player, appendToLog, handleFoundItem, isResolvingCombat]);
+    }, [isPlayerTurn, enemies, gameState, isResolvingCombat, handleEnemyTurns]);
+
+    const generatePostEventScene = useCallback(async () => {
+        if (!worldData || !playerLocationId) return;
+
+        const currentLocation = worldData.locations.find(l => l.id === playerLocationId);
+        if (!currentLocation) return;
+        
+        const { description, actions: localActions, foundItem, isFallback } = await generateScene(player, currentLocation);
+        if (isFallback) handleFallback();
+
+        const moveActions = worldData.connections
+            .filter(c => c.from === playerLocationId || c.to === playerLocationId)
+            .map(c => {
+                const targetId = c.from === playerLocationId ? c.to : c.from;
+                const targetLocation = worldData.locations.find(l => l.id === targetId);
+                return {
+                    label: `Go to ${targetLocation?.name || '???' }`,
+                    type: 'move' as const,
+                    targetLocationId: targetId
+                };
+            });
+
+        dispatch({ type: 'SET_SCENE', payload: { description, actions: [...localActions, ...moveActions] } });
+        if (foundItem) handleFoundItem(foundItem);
+        dispatch({ type: 'SET_GAME_STATE', payload: GameState.EXPLORING });
+
+    }, [worldData, playerLocationId, player, handleFoundItem, handleFallback]);
     
     // Effect to generate the next scene after combat state has been fully updated
     useEffect(() => {
-        if (isGeneratingPostCombatScene && worldData && playerLocationId) {
-            const currentLocation = worldData.locations.find(l => l.id === playerLocationId);
-            if (!currentLocation) return;
-
-            generateScene(player, currentLocation).then(({ description, actions: localActions, foundItem }) => {
-                const moveActions = worldData.connections
-                        .filter(c => c.from === playerLocationId || c.to === playerLocationId)
-                        .map(c => {
-                            const targetId = c.from === playerLocationId ? c.to : c.from;
-                            const targetLocation = worldData.locations.find(l => l.id === targetId);
-                            return {
-                                label: `Go to ${targetLocation?.name || '???' }`,
-                                type: 'move' as const,
-                                targetLocationId: targetId
-                            };
-                        });
-
-                dispatch({ type: 'SET_SCENE', payload: { description, actions: [...localActions, ...moveActions] } });
-                if (foundItem) handleFoundItem(foundItem);
+        if (isGeneratingPostCombatScene) {
+            generatePostEventScene().then(() => {
                 dispatch({ type: 'SET_ENEMIES', payload: [] });
-                dispatch({ type: 'SET_GAME_STATE', payload: GameState.EXPLORING });
                 setIsResolvingCombat(false);
                 setIsGeneratingPostCombatScene(false);
             });
         }
-    }, [isGeneratingPostCombatScene, player, handleFoundItem, worldData, playerLocationId]);
+    }, [isGeneratingPostCombatScene, generatePostEventScene]);
 
     // Effect to generate the next scene after a social encounter
     useEffect(() => {
-        if (isGeneratingPostSocialScene && worldData && playerLocationId) {
-            const currentLocation = worldData.locations.find(l => l.id === playerLocationId);
-            if (!currentLocation) return;
-            
-            generateScene(player, currentLocation).then(({ description, actions: localActions, foundItem }) => {
-                 const moveActions = worldData.connections
-                        .filter(c => c.from === playerLocationId || c.to === playerLocationId)
-                        .map(c => {
-                            const targetId = c.from === playerLocationId ? c.to : c.from;
-                            const targetLocation = worldData.locations.find(l => l.id === targetId);
-                            return {
-                                label: `Go to ${targetLocation?.name || '???' }`,
-                                type: 'move' as const,
-                                targetLocationId: targetId
-                            };
-                        });
-                dispatch({ type: 'SET_SCENE', payload: { description, actions: [...localActions, ...moveActions] } });
-                if (foundItem) handleFoundItem(foundItem);
-                dispatch({ type: 'SET_GAME_STATE', payload: GameState.EXPLORING });
+        if (isGeneratingPostSocialScene) {
+            generatePostEventScene().then(() => {
                 setIsGeneratingPostSocialScene(false);
             });
         }
-    }, [isGeneratingPostSocialScene, player, handleFoundItem, worldData, playerLocationId]);
+    }, [isGeneratingPostSocialScene, generatePostEventScene]);
     
     const renderGameContent = () => {
         switch (gameState) {

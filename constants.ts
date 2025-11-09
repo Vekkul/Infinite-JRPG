@@ -1,5 +1,7 @@
 import { Player, CharacterClass } from './types';
 
+export const JRPG_SAVE_KEY = 'jrpgSaveDataV2';
+
 export const INITIAL_PLAYER_STATS: Player = {
   name: 'Hero',
   class: CharacterClass.WARRIOR,
@@ -35,3 +37,9 @@ export const CLASS_STATS: Record<CharacterClass, Partial<Player>> = {
         ep: 20,
     }
 };
+
+// Game Mechanics
+export const CRIT_CHANCE = 0.1;
+export const CRIT_MULTIPLIER = 1.5;
+export const FLEE_CHANCE = 0.4;
+export const TRAVEL_ENCOUNTER_CHANCE = 0.5;

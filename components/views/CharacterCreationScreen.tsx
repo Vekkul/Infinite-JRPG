@@ -26,12 +26,16 @@ export const CharacterCreationScreen: React.FC<CharacterCreationScreenProps> = (
         }
         setIsGenerating(true);
         setPortrait('');
-        const generatedImage = await generateCharacterPortrait(description, selectedClass);
-        if (generatedImage) {
+        const { portrait: generatedImage, isFallback } = await generateCharacterPortrait(description, selectedClass);
+        
+        if (isFallback) {
+            alert("A strange energy interfered with portrait generation. Please try again.");
+        } else if (generatedImage) {
             setPortrait(generatedImage);
         } else {
             alert("Failed to generate portrait. Please try a different description or try again later.");
         }
+
         setIsGenerating(false);
     };
 
@@ -125,7 +129,7 @@ export const CharacterCreationScreen: React.FC<CharacterCreationScreenProps> = (
                 <button
                     onClick={handleCreate}
                     disabled={!name.trim() || !portrait || isGenerating}
-                    className="w-full font-press-start text-2xl bg-green-600 hover:bg-green-500 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-bold py-4 px-8 rounded-lg border-4 border-green-800 hover:border-green-700 transition-all transform hover:scale-105"
+                    className="w-full font-press-start text-2xl bg-green-600 hover:bg-green-500 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-bold py-4 px-8 rounded-lg border-4 border-green-800 hover:green-700 transition-all transform hover:scale-105"
                 >
                     Start Adventure
                 </button>
