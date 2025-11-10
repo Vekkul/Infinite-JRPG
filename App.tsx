@@ -13,7 +13,7 @@ import { CombatView } from './components/views/CombatView';
 import { SocialEncounterView } from './components/views/SocialEncounterView';
 import { WorldMapView } from './components/views/WorldMapView';
 import { StatusBar } from './components/StatusBar';
-import { HeartIcon, StarIcon, SaveIcon, BoltIcon, FireIcon, MapIcon } from './components/icons';
+import { HeartIcon, StarIcon, SaveIcon, BoltIcon, FireIcon, MapIcon, BagIcon } from './components/icons';
 import { JRPG_SAVE_KEY, CRIT_CHANCE, CRIT_MULTIPLIER, FLEE_CHANCE, TRAVEL_ENCOUNTER_CHANCE } from './constants';
 
 const App: React.FC = () => {
@@ -591,19 +591,19 @@ const App: React.FC = () => {
                     {/* Player Status */}
                     {!isScreenState && (
                         <div className="md:col-span-1 flex flex-col gap-6 order-1 shrink-0">
-                            <div className="bg-gray-800/70 p-4 rounded-lg border-2 border-blue-500 shadow-lg">
-                                <div className="flex items-center gap-4 border-b-2 border-blue-400 pb-3 mb-4">
+                            <div className="bg-gray-800/70 p-3 md:p-4 rounded-lg border-2 border-blue-500 shadow-lg">
+                                <div className="flex items-center gap-4 border-b-2 border-blue-400 pb-2 mb-2 md:pb-3 md:mb-4">
                                     {player.portrait && (
-                                        <div className="w-20 h-20 bg-black rounded-md border-2 border-gray-600 flex-shrink-0">
+                                        <div className="w-14 h-14 md:w-20 md:h-20 bg-black rounded-md border-2 border-gray-600 flex-shrink-0">
                                             <img src={`data:image/png;base64,${player.portrait}`} alt="Player Portrait" className="w-full h-full object-cover rounded-sm" />
                                         </div>
                                     )}
-                                    <div>
-                                        <h2 className="text-2xl font-press-start text-blue-300 overflow-hidden text-ellipsis whitespace-nowrap" title={player.name}>{player.name}</h2>
+                                    <div className="min-w-0">
+                                        <h2 className="text-lg md:text-2xl font-press-start text-blue-300 overflow-hidden text-ellipsis whitespace-nowrap" title={player.name}>{player.name}</h2>
                                         <p className="text-lg text-gray-300">{player.class}</p>
                                     </div>
                                 </div>
-                                <div className="space-y-4">
+                                <div className="space-y-2 md:space-y-4">
                                     <div className="flex items-center gap-2"><HeartIcon className="w-5 h-5 text-red-500" /> <StatusBar label="HP" currentValue={player.hp} maxValue={player.maxHp} colorClass="bg-red-500" /></div>
                                     {player.class === CharacterClass.MAGE && player.mp !== undefined && player.maxMp !== undefined && (
                                         <div className="flex items-center gap-2"><FireIcon className="w-5 h-5 text-blue-400" /> <StatusBar label="MP" currentValue={player.mp} maxValue={player.maxMp} colorClass="bg-blue-500" /></div>
@@ -635,27 +635,40 @@ const App: React.FC = () => {
                     
                     {/* Actions Panel */}
                      {!isScreenState && (
-                        <div className="md:col-span-1 flex flex-col items-center justify-start gap-2 order-3 pt-4 shrink-0">
-                            <div className="w-full space-y-2">
+                        <div className="md:col-span-1 flex flex-col items-center justify-start gap-2 order-3 pt-2 md:pt-4 shrink-0">
+                            <div className="w-full flex flex-row items-center justify-center gap-4">
                                 {(gameState === GameState.EXPLORING || gameState === GameState.COMBAT) && (
-                                    <button onClick={() => setIsInventoryOpen(true)} className="w-full text-lg bg-purple-700 hover:bg-purple-600 disabled:bg-purple-900 disabled:cursor-not-allowed text-white font-bold py-3 px-4 rounded-lg border-2 border-purple-500 transition-all duration-200 transform hover:scale-105" disabled={!isPlayerTurn && gameState === GameState.COMBAT}>
-                                        Inventory
+                                    <button 
+                                      onClick={() => setIsInventoryOpen(true)} 
+                                      className="flex-1 flex items-center justify-center text-lg bg-purple-700 hover:bg-purple-600 disabled:bg-purple-900 disabled:cursor-not-allowed text-white font-bold p-3 rounded-lg border-2 border-purple-500 transition-all duration-200 transform hover:scale-105" 
+                                      disabled={!isPlayerTurn && gameState === GameState.COMBAT}
+                                      aria-label="Inventory"
+                                    >
+                                        <BagIcon className="w-8 h-8" />
                                     </button>
                                 )}
                                 {gameState === GameState.EXPLORING && (
                                     <>
-                                        <button onClick={() => setIsMapOpen(true)} className="w-full flex items-center justify-center gap-2 text-lg bg-teal-700 hover:bg-teal-600 text-white font-bold py-3 px-4 rounded-lg border-2 border-teal-500 transition-all duration-200 transform hover:scale-105">
-                                           <MapIcon/> Map
+                                        <button 
+                                          onClick={() => setIsMapOpen(true)} 
+                                          className="flex-1 flex items-center justify-center text-lg bg-teal-700 hover:bg-teal-600 text-white font-bold p-3 rounded-lg border-2 border-teal-500 transition-all duration-200 transform hover:scale-105"
+                                          aria-label="Map"
+                                        >
+                                           <MapIcon className="w-8 h-8"/>
                                         </button>
-                                        <button onClick={saveGame} className="w-full flex items-center justify-center gap-2 text-lg bg-indigo-700 hover:bg-indigo-600 text-white font-bold py-3 px-4 rounded-lg border-2 border-indigo-500 transition-all duration-200 transform hover:scale-105">
-                                            <SaveIcon /> Save Game
+                                        <button 
+                                          onClick={saveGame} 
+                                          className="flex-1 flex items-center justify-center text-lg bg-indigo-700 hover:bg-indigo-600 text-white font-bold p-3 rounded-lg border-2 border-indigo-500 transition-all duration-200 transform hover:scale-105"
+                                          aria-label="Save Game"
+                                        >
+                                            <SaveIcon className="w-8 h-8" />
                                         </button>
                                     </>
                                 )}
-                                {gameState === GameState.COMBAT && !isPlayerTurn && (
-                                    <div className="text-center text-yellow-400 font-press-start animate-pulse">Enemy Turn...</div>
-                                )}
                             </div>
+                            {gameState === GameState.COMBAT && !isPlayerTurn && (
+                                <div className="text-center text-yellow-400 font-press-start animate-pulse mt-2">Enemy Turn...</div>
+                            )}
                         </div>
                      )}
                 </div>

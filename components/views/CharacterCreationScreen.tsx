@@ -52,7 +52,7 @@ export const CharacterCreationScreen: React.FC<CharacterCreationScreenProps> = (
     };
 
     return (
-        <div className="flex flex-col items-center justify-center h-full animate-fade-in text-lg">
+        <div className="flex flex-col items-center justify-start h-full animate-fade-in text-lg">
             <h1 className="text-5xl font-press-start text-yellow-400 mb-6" style={{textShadow: '2px 2px 0 #000'}}>Create Your Hero</h1>
             
             <div className="w-full max-w-4xl grid grid-cols-1 md:grid-cols-2 gap-8">
