@@ -313,6 +313,7 @@ export const reducer = (state: AppState, action: Action): AppState => {
     case 'SET_SOCIAL_ENCOUNTER':
         return {
             ...state,
+            storyText: action.payload.description,
             socialEncounter: action.payload,
             gameState: GameState.SOCIAL_ENCOUNTER,
         };
@@ -352,6 +353,9 @@ export const reducer = (state: AppState, action: Action): AppState => {
             player: updatedPlayer,
             log: newLog,
             socialEncounter: null,
+            storyText: choice.outcome,
+            actions: [],
+            gameState: GameState.EXPLORING,
         };
     }
 

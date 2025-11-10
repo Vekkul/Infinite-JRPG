@@ -344,9 +344,12 @@ export const generateCharacterPortrait = async (description: string, characterCl
             },
         });
 
-        for (const part of response.candidates[0].content.parts) {
-            if (part.inlineData) {
-                return { portrait: part.inlineData.data };
+        const parts = response.candidates?.[0]?.content?.parts;
+        if (parts) {
+            for (const part of parts) {
+                if (part.inlineData) {
+                    return { portrait: part.inlineData.data };
+                }
             }
         }
         throw new Error("No image data found in response.");
@@ -377,11 +380,14 @@ export const generateWorldData = async (): Promise<WorldData | null> => {
 
         let image = "";
         let imageMimeType = "";
-        for (const part of imageResponse.candidates[0].content.parts) {
-            if (part.inlineData) {
-                image = part.inlineData.data;
-                imageMimeType = part.inlineData.mimeType;
-                break;
+        const imageParts = imageResponse.candidates?.[0]?.content?.parts;
+        if (imageParts) {
+            for (const part of imageParts) {
+                if (part.inlineData) {
+                    image = part.inlineData.data;
+                    imageMimeType = part.inlineData.mimeType;
+                    break;
+                }
             }
         }
 
@@ -425,5 +431,31 @@ export const generateWorldData = async (): Promise<WorldData | null> => {
     } catch (error) {
         console.error("Error generating world data:", error);
         return null;
+    }
+};
+
+export const generateSpeech = async (text: string): Promise<{ audio: string; isFallback: boolean; }> => {
+    try {
+        const response = await ai.models.generateContent({
+            model: "gemini-2.5-flash-preview-tts",
+            contents: [{ parts: [{ text: `Say with the tone of an epic fantasy narrator: ${text}` }] }],
+            config: {
+                responseModalities: [Modality.AUDIO],
+                speechConfig: {
+                    voiceConfig: {
+                        prebuiltVoiceConfig: { voiceName: 'Kore' },
+                    },
+                },
+            },
+        });
+        const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+        if (base64Audio) {
+            return { audio: base64Audio, isFallback: false };
+        }
+        throw new Error("No audio data found in response.");
+
+    } catch (error) {
+        console.error("Error generating speech:", error);
+        return { audio: "", isFallback: true };
     }
 };
