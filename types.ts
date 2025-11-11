@@ -169,7 +169,7 @@ export type Action =
   | { type: 'UPDATE_PLAYER'; payload: Partial<Player> }
   | { type: 'ADD_LOG'; payload: string }
   | { type: 'ADD_ITEM_TO_INVENTORY'; payload: Omit<Item, 'quantity'> }
-  | { type: 'COMBAT_VICTORY'; payload: { enemies: Enemy[] } }
+  | { type: 'PROCESS_COMBAT_VICTORY'; payload: { xpGained: number; loot: Omit<Item, 'quantity'>[]; regen: {hp: number; mp: number; ep: number; } } }
   | { type: 'USE_ITEM'; payload: { inventoryIndex: number } }
   | { type: 'ENEMY_ACTION_HEAL'; payload: { enemyIndex: number; healAmount: number } }
   | { type: 'ENEMY_ACTION_DRAIN_LIFE', payload: { enemyIndex: number; damage: number } }

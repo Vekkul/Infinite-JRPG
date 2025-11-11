@@ -3,7 +3,7 @@ import { initialState } from './initialState';
 import { CLASS_STATS, PLAYER_ABILITIES } from '../constants';
 
 const appendToLog = (log: string[], message: string): string[] => {
-    return [...log.slice(-10), message];
+    return [...log.slice(-20), message];
 };
 
 const addItemToInventory = (inventory: Item[], itemDef: Omit<Item, 'quantity'>): Item[] => {
@@ -52,6 +52,7 @@ const handleLevelUp = (currentPlayer: Player): { updatedPlayer: Player; logs: st
     } else if (updatedPlayer.class === CharacterClass.ROGUE) {
         const newMaxEp = (updatedPlayer.maxEp || 0) + 5;
         updatedPlayer.maxEp = newMaxEp;
+        // Fix: Corrected typo from newEp to newMaxEp
         updatedPlayer.ep = newMaxEp;
         logs.push('Max EP increased!');
     }
@@ -224,42 +225,31 @@ export const reducer = (state: AppState, action: Action): AppState => {
             player: { ...state.player, inventory: addItemToInventory(state.player.inventory, action.payload) }
         };
 
-    case 'COMBAT_VICTORY': {
-        const defeatedEnemies = action.payload.enemies;
-        const totalXpGained = defeatedEnemies.reduce((sum, e) => sum + Math.floor(e.maxHp / 2) + e.attack, 0);
+    case 'PROCESS_COMBAT_VICTORY': {
+        const { xpGained, loot, regen } = action.payload;
         
         let newLog = [...state.log];
         newLog = appendToLog(newLog, 'VICTORY! All enemies defeated!');
-        newLog = appendToLog(newLog, `You gained ${totalXpGained} XP!`);
+        if(xpGained > 0) newLog = appendToLog(newLog, `You gained ${xpGained} XP!`);
         
         let newInventory = [...state.player.inventory];
-        defeatedEnemies.forEach(e => {
-            if (e.loot) {
-                newLog = appendToLog(newLog, `You obtained a ${e.loot.name}!`);
-                newInventory = addItemToInventory(newInventory, e.loot);
-            }
+        loot.forEach(item => {
+            newLog = appendToLog(newLog, `You obtained a ${item.name}!`);
+            newInventory = addItemToInventory(newInventory, item);
         });
         
         let updatedPlayer: Player = {
             ...state.player,
-            xp: state.player.xp + totalXpGained,
-            inventory: newInventory
+            xp: state.player.xp + xpGained,
+            inventory: newInventory,
+            hp: Math.min(state.player.maxHp, state.player.hp + regen.hp),
+            mp: Math.min(state.player.maxMp || 0, (state.player.mp || 0) + regen.mp),
+            ep: Math.min(state.player.maxEp || 0, (state.player.ep || 0) + regen.ep),
         };
-        
-        // Post-combat resource regeneration
-        if (updatedPlayer.class === CharacterClass.MAGE) {
-            const mpRegen = Math.floor((updatedPlayer.maxMp || 0) * 0.2);
-            updatedPlayer.mp = Math.min(updatedPlayer.maxMp || 0, (updatedPlayer.mp || 0) + mpRegen);
-            newLog = appendToLog(newLog, `You recovered ${mpRegen} MP.`);
-        } else if (updatedPlayer.class === CharacterClass.ROGUE) {
-            const epRegen = Math.floor((updatedPlayer.maxEp || 0) * 0.25);
-            updatedPlayer.ep = Math.min(updatedPlayer.maxEp || 0, (updatedPlayer.ep || 0) + epRegen);
-            newLog = appendToLog(newLog, `You recovered ${epRegen} EP.`);
-        } else if (updatedPlayer.class === CharacterClass.WARRIOR) {
-            const hpRegen = Math.floor(updatedPlayer.maxHp * 0.1);
-            updatedPlayer.hp = Math.min(updatedPlayer.maxHp, updatedPlayer.hp + hpRegen);
-            newLog = appendToLog(newLog, `Your warrior's resolve recovers you ${hpRegen} HP.`);
-        }
+
+        if (regen.hp > 0) newLog = appendToLog(newLog, `Your warrior's resolve recovers you ${regen.hp} HP.`);
+        if (regen.mp > 0) newLog = appendToLog(newLog, `You recovered ${regen.mp} MP.`);
+        if (regen.ep > 0) newLog = appendToLog(newLog, `You recovered ${regen.ep} EP.`);
         
         if (updatedPlayer.xp >= updatedPlayer.xpToNextLevel) {
             const { updatedPlayer: leveledUpPlayer, logs: levelUpLogs } = handleLevelUp(updatedPlayer);

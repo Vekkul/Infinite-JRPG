@@ -1,5 +1,3 @@
-
-
 import React, { useState, useEffect, useCallback, useRef, useReducer } from 'react';
 import { GameState, Player, Enemy, GameAction, Item, ItemType, SaveData, CharacterClass, EnemyAbility, SocialChoice, AIPersonality, PlayerAbility } from './types';
 import { generateScene, generateEncounter, generateSocialEncounter, generateWorldData, generateExploreResult, generateSpeech } from './services/geminiService';
@@ -14,8 +12,9 @@ import { ExploringView } from './components/views/ExploringView';
 import { CombatView } from './components/views/CombatView';
 import { SocialEncounterView } from './components/views/SocialEncounterView';
 import { WorldMapView } from './components/views/WorldMapView';
+import { LogView } from './components/views/LogView';
 import { StatusBar } from './components/StatusBar';
-import { HeartIcon, StarIcon, SaveIcon, BoltIcon, FireIcon, MapIcon, BagIcon, SpeakerOnIcon, SpeakerOffIcon } from './components/icons';
+import { HeartIcon, StarIcon, SaveIcon, BoltIcon, FireIcon, MapIcon, BagIcon, SpeakerOnIcon, SpeakerOffIcon, BookIcon } from './components/icons';
 import { JRPG_SAVE_KEY, CRIT_CHANCE, CRIT_MULTIPLIER, FLEE_CHANCE, TRAVEL_ENCOUNTER_CHANCE } from './constants';
 
 function decode(base64: string) {
@@ -47,6 +46,11 @@ async function decodeAudioData(
   return buffer;
 }
 
+interface EventPopup {
+  id: number;
+  text: string;
+  type: 'info' | 'heal' | 'item' | 'xp';
+}
 
 const App: React.FC = () => {
     const [state, dispatch] = useReducer(reducer, initialState);
@@ -54,14 +58,13 @@ const App: React.FC = () => {
 
     const [isInventoryOpen, setIsInventoryOpen] = useState(false);
     const [isMapOpen, setIsMapOpen] = useState(false);
+    const [isLogOpen, setIsLogOpen] = useState(false);
     const [saveFileExists, setSaveFileExists] = useState(false);
-    const [isResolvingCombat, setIsResolvingCombat] = useState(false);
-    const [isGeneratingPostCombatScene, setIsGeneratingPostCombatScene] = useState(false);
     const [showLevelUp, setShowLevelUp] = useState(false);
     const [isTtsEnabled, setIsTtsEnabled] = useState(false);
     const [isSpeaking, setIsSpeaking] = useState(false);
+    const [eventPopups, setEventPopups] = useState<EventPopup[]>([]);
 
-    const logRef = useRef<HTMLDivElement>(null);
     const enemyTurnInProgress = useRef(false);
     const prevLevelRef = useRef(player.level);
     const isInitialMount = useRef(true);
@@ -76,12 +79,6 @@ const App: React.FC = () => {
     }, []);
 
     useEffect(() => {
-        if (logRef.current) {
-            logRef.current.scrollTop = logRef.current.scrollHeight;
-        }
-    }, [log]);
-
-    useEffect(() => {
         if (player.level > prevLevelRef.current) {
             setShowLevelUp(true);
             const timer = setTimeout(() => setShowLevelUp(false), 3000); // Duration of the animation
@@ -89,6 +86,14 @@ const App: React.FC = () => {
         }
         prevLevelRef.current = player.level;
     }, [player.level]);
+
+    const createEventPopup = useCallback((text: string, type: EventPopup['type']) => {
+        const newPopup: EventPopup = { id: Date.now() + Math.random(), text, type };
+        setEventPopups(prev => [...prev, newPopup]);
+        setTimeout(() => {
+            setEventPopups(prev => prev.filter(p => p.id !== newPopup.id));
+        }, 2500);
+    }, []);
 
     const playSpeech = useCallback(async (text: string) => {
         if (!text || !audioContextRef.current) return;
@@ -135,7 +140,6 @@ const App: React.FC = () => {
     }, []);
 
     const handleToggleTts = () => {
-        // Initialize AudioContext on first user interaction with the button
         if (!audioContextRef.current) {
             audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
         }
@@ -144,10 +148,8 @@ const App: React.FC = () => {
         setIsTtsEnabled(willBeEnabled);
 
         if (willBeEnabled) {
-            // Clear the ref to allow the current text to be spoken upon enabling
             spokenTextRef.current = '';
         } else {
-            // If turning off, stop any current speech
             if (currentSpeechSourceRef.current) {
                 currentSpeechSourceRef.current.stop();
                 currentSpeechSourceRef.current = null;
@@ -167,17 +169,13 @@ const App: React.FC = () => {
                 playSpeech(storyText);
             }
         } else {
-            // If conditions aren't met (e.g., loading, TTS disabled), stop any playing speech.
             if (currentSpeechSourceRef.current) {
                 currentSpeechSourceRef.current.stop();
                 currentSpeechSourceRef.current = null;
             }
-            // If the state changes to a non-playable one while speaking, reset the speaking flag.
             if (isSpeaking) {
                 setIsSpeaking(false);
             }
-            // We don't clear spokenTextRef here to prevent replays after transient states like loading.
-            // The toggle handler is responsible for clearing it when the user intentionally reenables TTS.
         }
     }, [storyText, isTtsEnabled, gameState, playSpeech, isSpeaking]);
     
@@ -191,8 +189,9 @@ const App: React.FC = () => {
     
     const handleFoundItem = useCallback((itemDef: Omit<Item, 'quantity'>) => {
         appendToLog(`You found a ${itemDef.name}!`);
+        createEventPopup(`Found: ${itemDef.name}!`, 'item');
         dispatch({ type: 'ADD_ITEM_TO_INVENTORY', payload: itemDef });
-    }, [appendToLog]);
+    }, [appendToLog, createEventPopup]);
 
     const startNewGame = useCallback(() => {
         dispatch({ type: 'START_NEW_GAME' });
@@ -295,11 +294,9 @@ const App: React.FC = () => {
             } else if (result.triggerSocial) {
                 const { encounter: socialEncounter, isFallback } = await generateSocialEncounter(player);
                 if (isFallback) handleFallback();
-                // Combine outcome with social encounter description for context
                 socialEncounter.description = `${result.outcome} ${socialEncounter.description}`;
                 dispatch({ type: 'SET_SOCIAL_ENCOUNTER', payload: socialEncounter });
             } else {
-                // Narrative only. Regenerate the scene with the new outcome as description.
                 const currentLocation = worldData?.locations.find(l => l.id === playerLocationId);
                 if (currentLocation) {
                     const { actions: localActions, foundItem, isFallback } = await generateScene(player, currentLocation);
@@ -324,13 +321,8 @@ const App: React.FC = () => {
         }
     }, [player, appendToLog, handleFoundItem, worldData, playerLocationId, handleFallback]);
 
-    // This effect handles the logic for moving between locations.
     useEffect(() => {
-        // We use a ref to track the previous location to distinguish
-        // between a game load (prev is null) and an actual move (prev is not null).
         const prevLocationId = prevPlayerLocationId.current;
-        
-        // Update the ref for the next render cycle.
         prevPlayerLocationId.current = playerLocationId;
 
         if (isInitialMount.current) {
@@ -338,9 +330,6 @@ const App: React.FC = () => {
             return;
         }
         
-        // Only trigger move logic if the location ID has actually changed from
-        // one valid location to another. This prevents firing on game load,
-        // where the previous location ID would be null.
         if (prevLocationId && prevLocationId !== playerLocationId) {
             if (playerLocationId && worldData) {
                 const move = async () => {
@@ -394,10 +383,11 @@ const App: React.FC = () => {
                 dispatch({type: 'USE_ITEM', payload: { inventoryIndex: index }});
                 dispatch({ type: 'UPDATE_PLAYER', payload: { hp: newHp } });
 
-                appendToLog(`You use a ${item.name} and recover ${healed} HP.`);
+                const logMessage = `You use a ${item.name} and recover ${healed} HP.`;
+                appendToLog(logMessage);
+                createEventPopup(`+${healed} HP`, 'heal');
                 setIsInventoryOpen(false);
 
-                // Using an item in combat should end the player's turn.
                 if (gameState === GameState.COMBAT) {
                     dispatch({ type: 'SET_PLAYER_TURN', payload: false });
                 }
@@ -405,7 +395,36 @@ const App: React.FC = () => {
                 appendToLog(`Your HP is already full!`);
             }
         }
-    }, [player, appendToLog, gameState]);
+    }, [player, appendToLog, gameState, createEventPopup]);
+
+    const loadSceneForCurrentLocation = useCallback(async () => {
+        if (!worldData || !playerLocationId) return;
+
+        dispatch({ type: 'SET_GAME_STATE', payload: GameState.LOADING });
+
+        const currentLocation = worldData.locations.find(l => l.id === playerLocationId);
+        if (!currentLocation) return;
+        
+        const { description, actions: localActions, foundItem, isFallback } = await generateScene(player, currentLocation);
+        if (isFallback) handleFallback();
+
+        const moveActions = worldData.connections
+            .filter(c => c.from === playerLocationId || c.to === playerLocationId)
+            .map(c => {
+                const targetId = c.from === playerLocationId ? c.to : c.from;
+                const targetLocation = worldData.locations.find(l => l.id === targetId);
+                return {
+                    label: `Go to ${targetLocation?.name || '???' }`,
+                    type: 'move' as const,
+                    targetLocationId: targetId
+                };
+            });
+
+        dispatch({ type: 'SET_SCENE', payload: { description, actions: [...localActions, ...moveActions] } });
+        if (foundItem) handleFoundItem(foundItem);
+        dispatch({ type: 'SET_GAME_STATE', payload: GameState.EXPLORING });
+
+    }, [worldData, playerLocationId, player, handleFoundItem, handleFallback]);
 
     const handleCombatAction = useCallback(async (
         action: 'attack' | 'defend' | 'flee' | 'ability',
@@ -440,46 +459,31 @@ const App: React.FC = () => {
         } else if (action === 'flee') {
             if (Math.random() < FLEE_CHANCE) {
                 appendToLog('You successfully escaped!');
-                const currentLocation = worldData?.locations.find(l => l.id === playerLocationId);
-                if (currentLocation) {
-                    const { description, actions: localActions, foundItem, isFallback } = await generateScene(player, currentLocation);
-                    if (isFallback) handleFallback();
-                     const moveActions = worldData.connections
-                        .filter(c => c.from === playerLocationId || c.to === playerLocationId)
-                        .map(c => {
-                            const targetId = c.from === playerLocationId ? c.to : c.from;
-                            const targetLocation = worldData.locations.find(l => l.id === targetId);
-                            return {
-                                label: `Go to ${targetLocation?.name || '???' }`,
-                                type: 'move' as const,
-                                targetLocationId: targetId
-                            };
-                        });
-
-                    dispatch({ type: 'SET_SCENE', payload: { description, actions: [...localActions, ...moveActions] } });
-                    if (foundItem) handleFoundItem(foundItem);
-                }
+                await loadSceneForCurrentLocation();
                 dispatch({ type: 'SET_ENEMIES', payload: [] });
-                dispatch({ type: 'SET_GAME_STATE', payload: GameState.EXPLORING });
                 return;
             } else {
                 dispatch({ type: 'PLAYER_ACTION_FLEE_FAILURE' });
             }
         }
-    }, [player, enemies, appendToLog, handleFoundItem, isPlayerTurn, worldData, playerLocationId, handleFallback]);
+    }, [player, enemies, appendToLog, isPlayerTurn, loadSceneForCurrentLocation]);
 
     const handleSocialChoice = useCallback(async (choice: SocialChoice) => {
         dispatch({ type: 'SET_GAME_STATE', payload: GameState.LOADING });
     
-        // Apply reward, update log, update player stats from the choice
         dispatch({ type: 'RESOLVE_SOCIAL_CHOICE', payload: { choice } });
+
+        if (choice.reward) {
+            if (choice.reward.type === 'XP' && choice.reward.value) {
+                createEventPopup(`+${choice.reward.value} XP`, 'xp');
+            } else if (choice.reward.type === 'ITEM' && choice.reward.item) {
+                createEventPopup(`Found: ${choice.reward.item.name}!`, 'item');
+            }
+        }
     
-        // Now, generate the next set of actions for the current location
         if (worldData && playerLocationId) {
             const currentLocation = worldData.locations.find(l => l.id === playerLocationId);
             if (currentLocation) {
-                // We call generateScene but we only really care about the actions and potential item.
-                // The description it generates will be ignored.
                 const { actions: localActions, foundItem, isFallback } = await generateScene(player, currentLocation);
                 if (isFallback) handleFallback();
                 
@@ -495,7 +499,6 @@ const App: React.FC = () => {
                         };
                     });
                 
-                // Set the scene with the outcome of the choice as the main description
                 dispatch({ type: 'SET_SCENE', payload: { description: choice.outcome, actions: [...localActions, ...moveActions] } });
     
                 if (foundItem) {
@@ -505,7 +508,7 @@ const App: React.FC = () => {
         }
         
         dispatch({ type: 'SET_GAME_STATE', payload: GameState.EXPLORING });
-    }, [worldData, playerLocationId, player, handleFoundItem, handleFallback]);
+    }, [worldData, playerLocationId, player, handleFoundItem, handleFallback, createEventPopup]);
 
     const handleEnemyTurns = useCallback(async () => {
         enemyTurnInProgress.current = true;
@@ -513,41 +516,25 @@ const App: React.FC = () => {
 
         const determineEnemyAction = (enemy: Enemy): 'attack' | EnemyAbility | null => {
             if (!enemy.ability) return 'attack';
-
             const hpPercent = enemy.hp / enemy.maxHp;
-
             switch (enemy.aiPersonality) {
                 case AIPersonality.DEFENSIVE:
                     if (hpPercent < 0.5 && (enemy.ability === EnemyAbility.HEAL || enemy.ability === EnemyAbility.SHIELD)) {
-                        if (enemy.ability === EnemyAbility.SHIELD && enemy.isShielded) return 'attack'; // Don't shield if already shielded
+                        if (enemy.ability === EnemyAbility.SHIELD && enemy.isShielded) return 'attack';
                         return enemy.ability;
                     }
                     return 'attack';
-
                 case AIPersonality.STRATEGIC:
-                    if (hpPercent < 0.3 && enemy.ability === EnemyAbility.HEAL) {
-                        return EnemyAbility.HEAL;
-                    }
-                    if (hpPercent < 0.7 && !enemy.isShielded && enemy.ability === EnemyAbility.SHIELD && Math.random() < 0.8) {
-                        return EnemyAbility.SHIELD;
-                    }
-                    if ((enemy.ability === EnemyAbility.DRAIN_LIFE || enemy.ability === EnemyAbility.MULTI_ATTACK) && Math.random() < 0.4) {
-                        return enemy.ability;
-                    }
+                    if (hpPercent < 0.3 && enemy.ability === EnemyAbility.HEAL) return EnemyAbility.HEAL;
+                    if (hpPercent < 0.7 && !enemy.isShielded && enemy.ability === EnemyAbility.SHIELD && Math.random() < 0.8) return EnemyAbility.SHIELD;
+                    if ((enemy.ability === EnemyAbility.DRAIN_LIFE || enemy.ability === EnemyAbility.MULTI_ATTACK) && Math.random() < 0.4) return enemy.ability;
                     return 'attack';
-                
                 case AIPersonality.WILD:
                     if (enemy.ability === EnemyAbility.SHIELD && enemy.isShielded) return 'attack';
-                    if (Math.random() < 0.5) {
-                        return enemy.ability;
-                    }
+                    if (Math.random() < 0.5) return enemy.ability;
                     return 'attack';
-
-                case AIPersonality.AGGRESSIVE:
-                default:
-                    if ((enemy.ability === EnemyAbility.DRAIN_LIFE || enemy.ability === EnemyAbility.MULTI_ATTACK) && Math.random() < 0.3) {
-                        return enemy.ability;
-                    }
+                case AIPersonality.AGGRESSIVE: default:
+                    if ((enemy.ability === EnemyAbility.DRAIN_LIFE || enemy.ability === EnemyAbility.MULTI_ATTACK) && Math.random() < 0.3) return enemy.ability;
                     if ((enemy.ability === EnemyAbility.HEAL || enemy.ability === EnemyAbility.SHIELD) && Math.random() < 0.15) {
                         if (enemy.ability === EnemyAbility.SHIELD && enemy.isShielded) return 'attack';
                         return enemy.ability;
@@ -573,12 +560,14 @@ const App: React.FC = () => {
                         appendToLog(`${enemy.name} uses ${actionToTake}!`);
                     switch (actionToTake) {
                         case EnemyAbility.HEAL:
-                            const healAmount = Math.floor(enemy.maxHp * 0.25); // Heal for 25%
+                            const healAmount = Math.floor(enemy.maxHp * 0.25);
                             dispatch({ type: 'ENEMY_ACTION_HEAL', payload: { enemyIndex: i, healAmount } });
+                            createEventPopup(`${enemy.name} heals!`, 'heal');
                             appendToLog(`${enemy.name} recovers ${healAmount} HP.`);
                             break;
                         case EnemyAbility.SHIELD:
                             dispatch({ type: 'ENEMY_ACTION_SHIELD', payload: { enemyIndex: i } });
+                            createEventPopup(`${enemy.name} shields!`, 'info');
                             appendToLog(`${enemy.name} raises a magical shield!`);
                             break;
                         case EnemyAbility.DRAIN_LIFE:
@@ -603,7 +592,6 @@ const App: React.FC = () => {
                             break;
                     }
                 } else {
-                    // Handle attack
                     const isCrit = Math.random() < CRIT_CHANCE;
                     let enemyDamage = Math.floor(enemy.attack + (Math.random() * 4 - 2));
                     if(isCrit) {
@@ -611,7 +599,7 @@ const App: React.FC = () => {
                     }
                     let playerDamageTaken = player.isDefending ? Math.max(1, Math.floor(enemyDamage / 2)) : enemyDamage;
                     const newPlayerHp = Math.max(0, currentHp - playerDamageTaken);
-                    currentHp = newPlayerHp; // Update local HP tracker
+                    currentHp = newPlayerHp;
                     dispatch({ type: 'UPDATE_PLAYER', payload: { hp: newPlayerHp } });
                     appendToLog(`${enemy.name} attacks! You take ${playerDamageTaken} damage. ${isCrit ? 'CRITICAL!' : ''}`);
                 }
@@ -620,27 +608,52 @@ const App: React.FC = () => {
                     dispatch({ type: 'SET_GAME_STATE', payload: GameState.GAME_OVER });
                     appendToLog('You have been defeated...');
                     enemyTurnInProgress.current = false;
-                    return; // Stop enemy turns if player is defeated
+                    return;
                 }
             }
         }
-        // After all enemies have acted
-        if (currentHp > 0) { // Check if player is still alive
+        if (currentHp > 0) {
             dispatch({ type: 'SET_PLAYER_TURN', payload: true });
         }
         enemyTurnInProgress.current = false;
 
-    }, [enemies, player, appendToLog]);
+    }, [enemies, player, appendToLog, createEventPopup]);
+
+    const handleCombatVictory = useCallback(async (defeatedEnemies: Enemy[]) => {
+        const totalXpGained = defeatedEnemies.reduce((sum, e) => sum + Math.floor(e.maxHp / 2) + e.attack, 0);
+        const lootItems = defeatedEnemies.map(e => e.loot).filter((l): l is Omit<Item, 'quantity'> => !!l);
+
+        createEventPopup('VICTORY!', 'info');
+        if (totalXpGained > 0) setTimeout(() => createEventPopup(`+${totalXpGained} XP`, 'xp'), 500);
+        lootItems.forEach((item, index) => setTimeout(() => createEventPopup(`Found: ${item.name}!`, 'item'), 1000 + index * 500));
+        
+        let regen = { hp: 0, mp: 0, ep: 0 };
+        if (player.class === CharacterClass.MAGE) {
+            regen.mp = Math.floor((player.maxMp || 0) * 0.2);
+            if(regen.mp > 0) setTimeout(() => createEventPopup(`+${regen.mp} MP`, 'heal'), 1500 + lootItems.length * 500);
+        } else if (player.class === CharacterClass.ROGUE) {
+            regen.ep = Math.floor((player.maxEp || 0) * 0.25);
+            if (regen.ep > 0) setTimeout(() => createEventPopup(`+${regen.ep} EP`, 'heal'), 1500 + lootItems.length * 500);
+        } else if (player.class === CharacterClass.WARRIOR) {
+            regen.hp = Math.floor(player.maxHp * 0.1);
+            if (regen.hp > 0) setTimeout(() => createEventPopup(`+${regen.hp} HP`, 'heal'), 1500 + lootItems.length * 500);
+        }
+
+        dispatch({ 
+            type: 'PROCESS_COMBAT_VICTORY', 
+            payload: { xpGained: totalXpGained, loot: lootItems, regen }
+        });
+
+        await loadSceneForCurrentLocation();
+        dispatch({ type: 'SET_ENEMIES', payload: [] });
+    }, [player, loadSceneForCurrentLocation, createEventPopup]);
     
-    // Effect to check for victory or trigger enemy turn after player action
     useEffect(() => {
-        if (gameState !== GameState.COMBAT || isPlayerTurn || isResolvingCombat || enemyTurnInProgress.current) return;
+        if (gameState !== GameState.COMBAT || isPlayerTurn || enemyTurnInProgress.current) return;
 
         const allEnemiesDefeated = enemies.every(e => e.hp <= 0);
         if (allEnemiesDefeated && enemies.length > 0) {
-            setIsResolvingCombat(true);
-            dispatch({ type: 'COMBAT_VICTORY', payload: { enemies } });
-            setIsGeneratingPostCombatScene(true);
+            handleCombatVictory(enemies);
             return;
         }
 
@@ -648,45 +661,7 @@ const App: React.FC = () => {
            handleEnemyTurns();
         }
 
-    }, [isPlayerTurn, enemies, gameState, isResolvingCombat, handleEnemyTurns]);
-
-    const generatePostEventScene = useCallback(async () => {
-        if (!worldData || !playerLocationId) return;
-
-        const currentLocation = worldData.locations.find(l => l.id === playerLocationId);
-        if (!currentLocation) return;
-        
-        const { description, actions: localActions, foundItem, isFallback } = await generateScene(player, currentLocation);
-        if (isFallback) handleFallback();
-
-        const moveActions = worldData.connections
-            .filter(c => c.from === playerLocationId || c.to === playerLocationId)
-            .map(c => {
-                const targetId = c.from === playerLocationId ? c.to : c.from;
-                const targetLocation = worldData.locations.find(l => l.id === targetId);
-                return {
-                    label: `Go to ${targetLocation?.name || '???' }`,
-                    type: 'move' as const,
-                    targetLocationId: targetId
-                };
-            });
-
-        dispatch({ type: 'SET_SCENE', payload: { description, actions: [...localActions, ...moveActions] } });
-        if (foundItem) handleFoundItem(foundItem);
-        dispatch({ type: 'SET_GAME_STATE', payload: GameState.EXPLORING });
-
-    }, [worldData, playerLocationId, player, handleFoundItem, handleFallback]);
-    
-    // Effect to generate the next scene after combat state has been fully updated
-    useEffect(() => {
-        if (isGeneratingPostCombatScene) {
-            generatePostEventScene().then(() => {
-                dispatch({ type: 'SET_ENEMIES', payload: [] });
-                setIsResolvingCombat(false);
-                setIsGeneratingPostCombatScene(false);
-            });
-        }
-    }, [isGeneratingPostCombatScene, generatePostEventScene]);
+    }, [isPlayerTurn, enemies, gameState, handleEnemyTurns, handleCombatVictory]);
     
     const renderGameContent = () => {
         switch (gameState) {
@@ -734,6 +709,11 @@ const App: React.FC = () => {
                 worldData={worldData}
                 playerLocationId={playerLocationId}
             />
+             <LogView
+                isOpen={isLogOpen}
+                onClose={() => setIsLogOpen(false)}
+                log={log}
+            />
             <div className="max-w-7xl mx-auto h-full bg-black/30 rounded-2xl border-4 border-gray-700 shadow-2xl p-2 flex flex-col relative">
                 {showLevelUp && (
                     <div className="absolute inset-0 bg-black/50 z-50 flex items-center justify-center pointer-events-none">
@@ -742,74 +722,66 @@ const App: React.FC = () => {
                         </h1>
                     </div>
                 )}
+                 <div className="event-popup-container">
+                    {eventPopups.map(p => (
+                        <div key={p.id} className={`event-popup ${p.type}`}>{p.text}</div>
+                    ))}
+                </div>
                 <div className={`flex flex-col md:grid md:grid-cols-3 gap-3 h-full p-2 md:p-3 ${isScreenState ? 'md:items-center' : ''}`}>
                     {/* Player Status */}
                     {!isScreenState && (
                         <div className="md:col-span-1 flex flex-col order-1 shrink-0">
-                            <div className="bg-gray-800/70 p-3 md:p-4 rounded-lg border-2 border-blue-500 shadow-lg">
-                                <div className="flex items-center gap-4 border-b-2 border-blue-400 pb-2 mb-3">
+                            <div className="bg-gray-800/70 p-2 md:p-3 rounded-lg border-2 border-blue-500 shadow-lg">
+                                <div className="flex items-center gap-3">
                                     {player.portrait && (
-                                        <div className="w-14 h-14 md:w-20 md:h-20 bg-black rounded-md border-2 border-gray-600 flex-shrink-0">
+                                        <div className="w-20 h-20 md:w-24 md:h-24 bg-black rounded-md border-2 border-gray-600 flex-shrink-0">
                                             <img src={`data:image/png;base64,${player.portrait}`} alt="Player Portrait" className="w-full h-full object-cover rounded-sm" />
                                         </div>
                                     )}
-                                    <div className="min-w-0">
-                                        <h2 className="text-lg md:text-2xl font-press-start text-blue-300 overflow-hidden text-ellipsis whitespace-nowrap" title={player.name}>{player.name}</h2>
-                                        <p className="text-lg text-gray-300">{player.class}</p>
-                                    </div>
-                                </div>
-                                <div className="grid grid-cols-3 gap-x-3 gap-y-1">
-                                    {/* HP Bar */}
-                                    <div>
-                                        <div className="flex justify-between items-center text-sm font-bold">
-                                            <span className="text-red-400">HP</span>
-                                            <span className="text-gray-300">{player.hp}/{player.maxHp}</span>
+                                    <div className="flex flex-col flex-grow w-full gap-2">
+                                        <div className="flex justify-between items-start">
+                                            <div className="flex-grow min-w-0">
+                                                <h2 className="text-lg md:text-xl font-press-start text-blue-300 overflow-hidden text-ellipsis whitespace-nowrap" title={player.name}>{player.name}</h2>
+                                                <p className="text-base text-gray-300">{player.class}</p>
+                                            </div>
+                                            <div className="text-base text-right flex-shrink-0">
+                                                <div>Lvl: <span className="font-bold text-white">{player.level}</span></div>
+                                                <div>Atk: <span className="font-bold text-white">{player.attack}</span></div>
+                                            </div>
                                         </div>
-                                        <div className="w-full bg-black/50 rounded-full h-3 border border-gray-600 overflow-hidden">
-                                            <div className="bg-red-500 h-full rounded-full transition-all duration-500 ease-in-out" style={{ width: `${(player.hp / player.maxHp) * 100}%` }}></div>
-                                        </div>
-                                    </div>
-
-                                    {/* Resource Bar */}
-                                    <div>
-                                        {player.class === CharacterClass.MAGE && player.mp !== undefined && player.maxMp !== undefined && (
-                                            <>
-                                                <div className="flex justify-between items-center text-sm font-bold">
-                                                    <span className="text-blue-400">MP</span>
-                                                    <span className="text-gray-300">{player.mp}/{player.maxMp}</span>
+                                        <div className="space-y-1">
+                                            <div className="flex items-center gap-2 text-sm font-bold">
+                                                <span className="text-red-400 w-5 text-xs">HP</span>
+                                                <div className="w-full bg-black/50 rounded-full h-4 border border-gray-600 relative overflow-hidden">
+                                                    <div className="bg-red-500 h-full rounded-full transition-all duration-500 ease-in-out" style={{ width: `${(player.hp / player.maxHp) * 100}%` }}></div>
+                                                    <span className="absolute inset-0 text-center text-white text-xs leading-4" style={{textShadow: '1px 1px 1px #000'}}>{player.hp}/{player.maxHp}</span>
                                                 </div>
-                                                <div className="w-full bg-black/50 rounded-full h-3 border border-gray-600 overflow-hidden">
-                                                    <div className="bg-blue-500 h-full rounded-full transition-all duration-500 ease-in-out" style={{ width: `${(player.mp / player.maxMp) * 100}%` }}></div>
+                                            </div>
+                                            {player.class === CharacterClass.MAGE && player.mp !== undefined && player.maxMp !== undefined && (
+                                                <div className="flex items-center gap-2 text-sm font-bold">
+                                                    <span className="text-blue-400 w-5 text-xs">MP</span>
+                                                    <div className="w-full bg-black/50 rounded-full h-4 border border-gray-600 relative overflow-hidden">
+                                                        <div className="bg-blue-500 h-full rounded-full transition-all duration-500 ease-in-out" style={{ width: `${(player.mp / player.maxMp) * 100}%` }}></div>
+                                                        <span className="absolute inset-0 text-center text-white text-xs leading-4" style={{textShadow: '1px 1px 1px #000'}}>{player.mp}/{player.maxMp}</span>
+                                                    </div>
                                                 </div>
-                                            </>
-                                        )}
-                                        {player.class === CharacterClass.ROGUE && player.ep !== undefined && player.maxEp !== undefined && (
-                                            <>
-                                                <div className="flex justify-between items-center text-sm font-bold">
-                                                    <span className="text-green-400">EP</span>
-                                                    <span className="text-gray-300">{player.ep}/{player.maxEp}</span>
+                                            )}
+                                            {player.class === CharacterClass.ROGUE && player.ep !== undefined && player.maxEp !== undefined && (
+                                                <div className="flex items-center gap-2 text-sm font-bold">
+                                                    <span className="text-green-400 w-5 text-xs">EP</span>
+                                                    <div className="w-full bg-black/50 rounded-full h-4 border border-gray-600 relative overflow-hidden">
+                                                        <div className="bg-green-500 h-full rounded-full transition-all duration-500 ease-in-out" style={{ width: `${(player.ep / player.maxEp) * 100}%` }}></div>
+                                                        <span className="absolute inset-0 text-center text-white text-xs leading-4" style={{textShadow: '1px 1px 1px #000'}}>{player.ep}/{player.maxEp}</span>
+                                                    </div>
                                                 </div>
-                                                <div className="w-full bg-black/50 rounded-full h-3 border border-gray-600 overflow-hidden">
-                                                    <div className="bg-green-500 h-full rounded-full transition-all duration-500 ease-in-out" style={{ width: `${(player.ep / player.maxEp) * 100}%` }}></div>
+                                            )}
+                                            <div className="flex items-center gap-2 text-sm font-bold">
+                                                <span className="text-yellow-400 w-5 text-xs">XP</span>
+                                                <div className="w-full bg-black/50 rounded-full h-4 border border-gray-600 relative overflow-hidden">
+                                                    <div className="bg-yellow-400 h-full rounded-full transition-all duration-500 ease-in-out" style={{ width: `${(player.xp / player.xpToNextLevel) * 100}%` }}></div>
+                                                    <span className="absolute inset-0 text-center text-black text-xs leading-4" style={{textShadow: '1px 1px 1px #FFF'}}>{player.xp}/{player.xpToNextLevel}</span>
                                                 </div>
-                                            </>
-                                        )}
-                                    </div>
-                                    
-                                    {/* Level/Attack Stats */}
-                                    <div className="row-span-2 text-lg flex flex-col justify-center text-right">
-                                        <span>Level: <span className="font-bold text-white">{player.level}</span></span>
-                                        <span>Attack: <span className="font-bold text-white">{player.attack}</span></span>
-                                    </div>
-                                    
-                                    {/* XP Bar */}
-                                    <div className="col-span-2">
-                                        <div className="flex justify-between items-center text-sm font-bold">
-                                            <span className="text-yellow-400">XP</span>
-                                            <span className="text-gray-300">{player.xp}/{player.xpToNextLevel}</span>
-                                        </div>
-                                        <div className="w-full bg-black/50 rounded-full h-3 border border-gray-600 overflow-hidden">
-                                            <div className="bg-yellow-400 h-full rounded-full transition-all duration-500 ease-in-out" style={{ width: `${(player.xp / player.xpToNextLevel) * 100}%` }}></div>
+                                            </div>
                                         </div>
                                     </div>
                                 </div>
@@ -819,7 +791,7 @@ const App: React.FC = () => {
 
                     {/* Main Screen & Log */}
                     <div className={`flex flex-col bg-black/50 rounded-lg border-2 border-gray-600 shadow-inner order-2 md:row-span-2 ${isScreenState ? 'md:col-span-3 h-full' : 'md:col-span-2'} grow min-h-0`}>
-                        <div className={`p-6 text-xl leading-relaxed relative overflow-y-auto ${isScreenState ? 'h-full' : 'h-1/2'}`}>
+                        <div className={`p-6 text-xl leading-relaxed relative overflow-y-auto h-full`}>
                            {renderGameContent()}
                            {!isScreenState && (
                                 <button
@@ -831,42 +803,44 @@ const App: React.FC = () => {
                                 </button>
                             )}
                         </div>
-                        {!isScreenState && (
-                            <div ref={logRef} className="h-1/2 bg-black/70 p-4 border-t-2 border-gray-600 overflow-y-auto text-lg space-y-1">
-                                {log.map((entry, index) => <p key={index} className="text-gray-300 animate-fade-in-short">{`> ${entry}`}</p>)}
-                            </div>
-                        )}
                     </div>
                     
                     {/* Actions Panel */}
                      {!isScreenState && (
                         <div className="md:col-span-1 flex flex-col items-center justify-start gap-2 order-3 pt-2 shrink-0">
-                            <div className="w-full flex flex-row items-center justify-center gap-4">
+                            <div className={`w-full grid ${gameState === GameState.EXPLORING ? 'grid-cols-4' : 'grid-cols-2'} md:grid-cols-2 gap-2`}>
                                 {(gameState === GameState.EXPLORING || gameState === GameState.COMBAT) && (
                                     <button 
                                       onClick={() => setIsInventoryOpen(true)} 
-                                      className="flex-1 flex items-center justify-center text-lg bg-purple-700 hover:bg-purple-600 disabled:bg-purple-900 disabled:cursor-not-allowed text-white font-bold p-3 rounded-lg border-2 border-purple-500 transition-all duration-200 transform hover:scale-105" 
+                                      className="flex items-center justify-center text-lg bg-purple-700 hover:bg-purple-600 disabled:bg-purple-900 disabled:cursor-not-allowed text-white font-bold p-2 rounded-lg border-2 border-purple-500 transition-all duration-200 transform hover:scale-105" 
                                       disabled={!isPlayerTurn && gameState === GameState.COMBAT}
                                       aria-label="Inventory"
                                     >
-                                        <BagIcon className="w-8 h-8" />
+                                        <BagIcon className="w-7 h-7" />
                                     </button>
                                 )}
+                                <button 
+                                    onClick={() => setIsLogOpen(true)}
+                                    className="flex items-center justify-center text-lg bg-yellow-700 hover:bg-yellow-600 text-white font-bold p-2 rounded-lg border-2 border-yellow-500 transition-all duration-200 transform hover:scale-105"
+                                    aria-label="Log"
+                                >
+                                    <BookIcon className="w-7 h-7"/>
+                                </button>
                                 {gameState === GameState.EXPLORING && (
                                     <>
                                         <button 
                                           onClick={() => setIsMapOpen(true)} 
-                                          className="flex-1 flex items-center justify-center text-lg bg-teal-700 hover:bg-teal-600 text-white font-bold p-3 rounded-lg border-2 border-teal-500 transition-all duration-200 transform hover:scale-105"
+                                          className="flex items-center justify-center text-lg bg-teal-700 hover:bg-teal-600 text-white font-bold p-2 rounded-lg border-2 border-teal-500 transition-all duration-200 transform hover:scale-105"
                                           aria-label="Map"
                                         >
-                                           <MapIcon className="w-8 h-8"/>
+                                           <MapIcon className="w-7 h-7"/>
                                         </button>
                                         <button 
                                           onClick={saveGame} 
-                                          className="flex-1 flex items-center justify-center text-lg bg-indigo-700 hover:bg-indigo-600 text-white font-bold p-3 rounded-lg border-2 border-indigo-500 transition-all duration-200 transform hover:scale-105"
+                                          className="flex items-center justify-center text-lg bg-indigo-700 hover:bg-indigo-600 text-white font-bold p-2 rounded-lg border-2 border-indigo-500 transition-all duration-200 transform hover:scale-105"
                                           aria-label="Save Game"
                                         >
-                                            <SaveIcon className="w-8 h-8" />
+                                            <SaveIcon className="w-7 h-7" />
                                         </button>
                                     </>
                                 )}
