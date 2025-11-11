@@ -33,13 +33,13 @@ export const WorldMapView: React.FC<WorldMapViewProps> = ({ isOpen, onClose, wor
           </button>
         </div>
 
-        <div className="p-6 overflow-auto flex-grow flex items-center justify-center">
+        <div className="p-6 overflow-auto flex-grow flex justify-center items-start">
           {worldData?.image ? (
-            <div className="relative w-full" style={{ aspectRatio: '1 / 1'}}>
+            <div className="relative inline-block max-w-full max-h-full">
               <img 
                 src={`data:image/png;base64,${worldData.image}`} 
                 alt="World Map" 
-                className="w-full h-full object-contain rounded-md border-2 border-gray-600"
+                className="block max-w-full max-h-full rounded-md border-2 border-gray-600"
               />
               {worldData.locations.map(location => {
                     const isPlayerLocation = location.id === playerLocationId;

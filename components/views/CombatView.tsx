@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Enemy, EnemyAbility, Player, CharacterClass, PlayerAbility } from '../../types';
 import { StatusBar } from '../StatusBar';
-import { HealIcon, ShieldIcon, SwordIcon, RunIcon, FireIcon, BoltIcon } from '../icons';
+import { HealIcon, ShieldIcon, SwordIcon, RunIcon, FireIcon, BoltIcon, StarIcon } from '../icons';
 import { useTypewriter } from '../../hooks/useTypewriter';
 import { PLAYER_ABILITIES } from '../../constants';
 
@@ -121,7 +121,7 @@ export const CombatView: React.FC<CombatViewProps> = ({ storyText, enemies, play
                  {isPlayerTurn && view === 'main' && (
                     <>
                         <button onClick={() => handleActionClick('attack')} className="flex items-center justify-center gap-2 text-lg bg-red-700 hover:bg-red-600 text-white font-bold py-3 px-4 rounded-lg border-2 border-red-500 transition-all transform hover:scale-105"><SwordIcon/>Attack</button>
-                        <button onClick={() => setView('abilities')} className="flex items-center justify-center gap-2 text-lg bg-purple-700 hover:bg-purple-600 text-white font-bold py-3 px-4 rounded-lg border-2 border-purple-500 transition-all transform hover:scale-105">Ability</button>
+                        <button onClick={() => setView('abilities')} className="flex items-center justify-center gap-2 text-lg bg-purple-700 hover:bg-purple-600 text-white font-bold py-3 px-4 rounded-lg border-2 border-purple-500 transition-all transform hover:scale-105"><StarIcon />Ability</button>
                         <button onClick={() => onCombatAction('defend')} className="flex items-center justify-center gap-2 text-lg bg-blue-700 hover:bg-blue-600 text-white font-bold py-3 px-4 rounded-lg border-2 border-blue-500 transition-all transform hover:scale-105"><ShieldIcon/>Defend</button>
                         <button onClick={() => onCombatAction('flee')} className="flex items-center justify-center gap-2 text-lg bg-green-700 hover:bg-green-600 text-white font-bold py-3 px-4 rounded-lg border-2 border-green-500 transition-all transform hover:scale-105"><RunIcon/>Flee</button>
                     </>

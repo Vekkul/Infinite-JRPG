@@ -779,7 +779,7 @@ const App: React.FC = () => {
                                                 <span className="text-yellow-400 w-5 text-xs">XP</span>
                                                 <div className="w-full bg-black/50 rounded-full h-4 border border-gray-600 relative overflow-hidden">
                                                     <div className="bg-yellow-400 h-full rounded-full transition-all duration-500 ease-in-out" style={{ width: `${(player.xp / player.xpToNextLevel) * 100}%` }}></div>
-                                                    <span className="absolute inset-0 text-center text-black text-xs leading-4" style={{textShadow: '1px 1px 1px #FFF'}}>{player.xp}/{player.xpToNextLevel}</span>
+                                                    <span className="absolute inset-0 text-center text-white text-xs leading-4" style={{textShadow: '1px 1px 1px #000'}}>{player.xp}/{player.xpToNextLevel}</span>
                                                 </div>
                                             </div>
                                         </div>
