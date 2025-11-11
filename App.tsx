@@ -1,4 +1,5 @@
 
+
 import React, { useState, useEffect, useCallback, useRef, useReducer } from 'react';
 import { GameState, Player, Enemy, GameAction, Item, ItemType, SaveData, CharacterClass, EnemyAbility, SocialChoice, AIPersonality, PlayerAbility } from './types';
 import { generateScene, generateEncounter, generateSocialEncounter, generateWorldData, generateExploreResult, generateSpeech } from './services/geminiService';
@@ -717,7 +718,7 @@ const App: React.FC = () => {
     const isScreenState = gameState === GameState.START_SCREEN || gameState === GameState.LOADING || gameState === GameState.GAME_OVER || gameState === GameState.CHARACTER_CREATION;
 
     return (
-        <main className="h-screen w-screen bg-gray-900 text-gray-200 p-4" style={{
+        <main className="h-screen w-screen bg-gray-900 text-gray-200 p-2" style={{
             backgroundImage: `radial-gradient(circle, rgba(31, 41, 55, 0.9) 0%, rgba(17, 24, 39, 1) 70%)`,
         }}>
             <Inventory 
@@ -733,7 +734,7 @@ const App: React.FC = () => {
                 worldData={worldData}
                 playerLocationId={playerLocationId}
             />
-            <div className="max-w-7xl mx-auto h-full bg-black/30 rounded-2xl border-4 border-gray-700 shadow-2xl p-4 flex flex-col relative">
+            <div className="max-w-7xl mx-auto h-full bg-black/30 rounded-2xl border-4 border-gray-700 shadow-2xl p-2 flex flex-col relative">
                 {showLevelUp && (
                     <div className="absolute inset-0 bg-black/50 z-50 flex items-center justify-center pointer-events-none">
                         <h1 className="text-6xl md:text-8xl font-press-start text-yellow-300 animate-level-up" style={{textShadow: '4px 4px 0 #000'}}>
@@ -741,12 +742,12 @@ const App: React.FC = () => {
                         </h1>
                     </div>
                 )}
-                <div className={`flex flex-col md:grid md:grid-cols-3 gap-6 h-full p-4 md:p-6 ${isScreenState ? 'md:items-center' : ''}`}>
+                <div className={`flex flex-col md:grid md:grid-cols-3 gap-3 h-full p-2 md:p-3 ${isScreenState ? 'md:items-center' : ''}`}>
                     {/* Player Status */}
                     {!isScreenState && (
-                        <div className="md:col-span-1 flex flex-col gap-6 order-1 shrink-0">
+                        <div className="md:col-span-1 flex flex-col order-1 shrink-0">
                             <div className="bg-gray-800/70 p-3 md:p-4 rounded-lg border-2 border-blue-500 shadow-lg">
-                                <div className="flex items-center gap-4 border-b-2 border-blue-400 pb-2 mb-2 md:pb-3 md:mb-4">
+                                <div className="flex items-center gap-4 border-b-2 border-blue-400 pb-2 mb-3">
                                     {player.portrait && (
                                         <div className="w-14 h-14 md:w-20 md:h-20 bg-black rounded-md border-2 border-gray-600 flex-shrink-0">
                                             <img src={`data:image/png;base64,${player.portrait}`} alt="Player Portrait" className="w-full h-full object-cover rounded-sm" />
@@ -757,18 +758,59 @@ const App: React.FC = () => {
                                         <p className="text-lg text-gray-300">{player.class}</p>
                                     </div>
                                 </div>
-                                <div className="space-y-2 md:space-y-4">
-                                    <div className="flex items-center gap-2"><HeartIcon className="w-5 h-5 text-red-500" /> <StatusBar label="HP" currentValue={player.hp} maxValue={player.maxHp} colorClass="bg-red-500" /></div>
-                                    {player.class === CharacterClass.MAGE && player.mp !== undefined && player.maxMp !== undefined && (
-                                        <div className="flex items-center gap-2"><FireIcon className="w-5 h-5 text-blue-400" /> <StatusBar label="MP" currentValue={player.mp} maxValue={player.maxMp} colorClass="bg-blue-500" /></div>
-                                    )}
-                                    {player.class === CharacterClass.ROGUE && player.ep !== undefined && player.maxEp !== undefined && (
-                                        <div className="flex items-center gap-2"><BoltIcon className="w-5 h-5 text-green-400" /> <StatusBar label="EP" currentValue={player.ep} maxValue={player.maxEp} colorClass="bg-green-500" /></div>
-                                    )}
-                                    <div className="flex items-center gap-2"><StarIcon className="w-5 h-5 text-yellow-400" /> <StatusBar label="XP" currentValue={player.xp} maxValue={player.xpToNextLevel} colorClass="bg-yellow-400" /></div>
-                                    <div className="text-lg grid grid-cols-2 gap-2">
+                                <div className="grid grid-cols-3 gap-x-3 gap-y-1">
+                                    {/* HP Bar */}
+                                    <div>
+                                        <div className="flex justify-between items-center text-sm font-bold">
+                                            <span className="text-red-400">HP</span>
+                                            <span className="text-gray-300">{player.hp}/{player.maxHp}</span>
+                                        </div>
+                                        <div className="w-full bg-black/50 rounded-full h-3 border border-gray-600 overflow-hidden">
+                                            <div className="bg-red-500 h-full rounded-full transition-all duration-500 ease-in-out" style={{ width: `${(player.hp / player.maxHp) * 100}%` }}></div>
+                                        </div>
+                                    </div>
+
+                                    {/* Resource Bar */}
+                                    <div>
+                                        {player.class === CharacterClass.MAGE && player.mp !== undefined && player.maxMp !== undefined && (
+                                            <>
+                                                <div className="flex justify-between items-center text-sm font-bold">
+                                                    <span className="text-blue-400">MP</span>
+                                                    <span className="text-gray-300">{player.mp}/{player.maxMp}</span>
+                                                </div>
+                                                <div className="w-full bg-black/50 rounded-full h-3 border border-gray-600 overflow-hidden">
+                                                    <div className="bg-blue-500 h-full rounded-full transition-all duration-500 ease-in-out" style={{ width: `${(player.mp / player.maxMp) * 100}%` }}></div>
+                                                </div>
+                                            </>
+                                        )}
+                                        {player.class === CharacterClass.ROGUE && player.ep !== undefined && player.maxEp !== undefined && (
+                                            <>
+                                                <div className="flex justify-between items-center text-sm font-bold">
+                                                    <span className="text-green-400">EP</span>
+                                                    <span className="text-gray-300">{player.ep}/{player.maxEp}</span>
+                                                </div>
+                                                <div className="w-full bg-black/50 rounded-full h-3 border border-gray-600 overflow-hidden">
+                                                    <div className="bg-green-500 h-full rounded-full transition-all duration-500 ease-in-out" style={{ width: `${(player.ep / player.maxEp) * 100}%` }}></div>
+                                                </div>
+                                            </>
+                                        )}
+                                    </div>
+                                    
+                                    {/* Level/Attack Stats */}
+                                    <div className="row-span-2 text-lg flex flex-col justify-center text-right">
                                         <span>Level: <span className="font-bold text-white">{player.level}</span></span>
                                         <span>Attack: <span className="font-bold text-white">{player.attack}</span></span>
+                                    </div>
+                                    
+                                    {/* XP Bar */}
+                                    <div className="col-span-2">
+                                        <div className="flex justify-between items-center text-sm font-bold">
+                                            <span className="text-yellow-400">XP</span>
+                                            <span className="text-gray-300">{player.xp}/{player.xpToNextLevel}</span>
+                                        </div>
+                                        <div className="w-full bg-black/50 rounded-full h-3 border border-gray-600 overflow-hidden">
+                                            <div className="bg-yellow-400 h-full rounded-full transition-all duration-500 ease-in-out" style={{ width: `${(player.xp / player.xpToNextLevel) * 100}%` }}></div>
+                                        </div>
                                     </div>
                                 </div>
                             </div>
@@ -798,7 +840,7 @@ const App: React.FC = () => {
                     
                     {/* Actions Panel */}
                      {!isScreenState && (
-                        <div className="md:col-span-1 flex flex-col items-center justify-start gap-2 order-3 pt-2 md:pt-4 shrink-0">
+                        <div className="md:col-span-1 flex flex-col items-center justify-start gap-2 order-3 pt-2 shrink-0">
                             <div className="w-full flex flex-row items-center justify-center gap-4">
                                 {(gameState === GameState.EXPLORING || gameState === GameState.COMBAT) && (
                                     <button 
