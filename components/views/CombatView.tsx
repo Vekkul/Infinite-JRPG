@@ -1,9 +1,9 @@
 import React, { useState } from 'react';
-import { Enemy, EnemyAbility, Player, CharacterClass, PlayerAbility } from '../../types';
+import { Enemy, EnemyAbility, Player, CharacterClass, PlayerAbility, StatusEffectType, Element } from '../../types';
 import { StatusBar } from '../StatusBar';
 import { HealIcon, ShieldIcon, SwordIcon, RunIcon, FireIcon, BoltIcon, StarIcon } from '../icons';
 import { useTypewriter } from '../../hooks/useTypewriter';
-import { PLAYER_ABILITIES } from '../../constants';
+import { PLAYER_ABILITIES, STATUS_EFFECT_CONFIG } from '../../constants';
 
 interface CombatViewProps {
   storyText: string;
@@ -19,6 +19,14 @@ interface DamagePopup {
     isCrit: boolean;
     enemyIndex: number;
 }
+
+const statusEffectIcons: Record<StatusEffectType, React.ReactNode> = {
+    [StatusEffectType.BURN]: <FireIcon className="w-4 h-4 text-orange-400" />,
+    [StatusEffectType.CHILL]: <span className="text-cyan-400">❄️</span>,
+    [StatusEffectType.SHOCK]: <BoltIcon className="w-4 h-4 text-yellow-400" />,
+    [StatusEffectType.GROUNDED]: <span className="text-amber-700">⛰️</span>,
+    [StatusEffectType.EARTH_ARMOR]: <ShieldIcon className="w-4 h-4 text-green-500" />,
+};
 
 export const CombatView: React.FC<CombatViewProps> = ({ storyText, enemies, player, isPlayerTurn, onCombatAction }) => {
     const [view, setView] = useState<'main' | 'targeting' | 'abilities'>('main');
@@ -63,21 +71,25 @@ export const CombatView: React.FC<CombatViewProps> = ({ storyText, enemies, play
     };
     
     const renderAbilities = () => {
+        const abilities: React.ReactNode[] = [];
         if (player.class === CharacterClass.WARRIOR) {
-            const ability = PLAYER_ABILITIES[PlayerAbility.HEAVY_STRIKE];
-            return <button onClick={() => handleActionClick('ability', ability.name)} className="flex items-center justify-center gap-2 text-lg bg-red-800 hover:bg-red-700 text-white font-bold py-3 px-4 rounded-lg border-2 border-red-600 transition-all transform hover:scale-105"><SwordIcon/> {ability.name}</button>
+            const ability = PLAYER_ABILITIES[PlayerAbility.EARTHEN_STRIKE];
+            abilities.push(<button key={ability.name} onClick={() => handleActionClick('ability', ability.name)} className="flex items-center justify-center gap-2 text-lg bg-amber-800 hover:bg-amber-700 text-white font-bold py-3 px-4 rounded-lg border-2 border-amber-600 transition-all transform hover:scale-105">⛰️ {ability.name}</button>)
         }
         if (player.class === CharacterClass.MAGE) {
-            const ability = PLAYER_ABILITIES[PlayerAbility.FIREBALL];
-            const disabled = (player.mp ?? 0) < ability.cost;
-            return <button onClick={() => handleActionClick('ability', ability.name)} disabled={disabled} className="flex items-center justify-center gap-2 text-lg bg-orange-700 hover:bg-orange-600 disabled:bg-gray-600 text-white font-bold py-3 px-4 rounded-lg border-2 border-orange-500 transition-all transform hover:scale-105"><FireIcon/> {ability.name} ({ability.cost} MP)</button>
+            const fireball = PLAYER_ABILITIES[PlayerAbility.FIREBALL];
+            const iceShard = PLAYER_ABILITIES[PlayerAbility.ICE_SHARD];
+            const fbDisabled = (player.mp ?? 0) < fireball.cost;
+            const isDisabled = (player.mp ?? 0) < iceShard.cost;
+            abilities.push(<button key={fireball.name} onClick={() => handleActionClick('ability', fireball.name)} disabled={fbDisabled} className="flex items-center justify-center gap-2 text-lg bg-orange-700 hover:bg-orange-600 disabled:bg-gray-600 text-white font-bold py-3 px-4 rounded-lg border-2 border-orange-500 transition-all transform hover:scale-105"><FireIcon/> {fireball.name} ({fireball.cost} MP)</button>)
+            abilities.push(<button key={iceShard.name} onClick={() => handleActionClick('ability', iceShard.name)} disabled={isDisabled} className="flex items-center justify-center gap-2 text-lg bg-cyan-700 hover:bg-cyan-600 disabled:bg-gray-600 text-white font-bold py-3 px-4 rounded-lg border-2 border-cyan-500 transition-all transform hover:scale-105">❄️ {iceShard.name} ({iceShard.cost} MP)</button>)
         }
         if (player.class === CharacterClass.ROGUE) {
-             const ability = PLAYER_ABILITIES[PlayerAbility.QUICK_STRIKE];
+             const ability = PLAYER_ABILITIES[PlayerAbility.LIGHTNING_STRIKE];
              const disabled = (player.ep ?? 0) < ability.cost;
-            return <button onClick={() => handleActionClick('ability', ability.name)} disabled={disabled} className="flex items-center justify-center gap-2 text-lg bg-green-700 hover:bg-green-600 disabled:bg-gray-600 text-white font-bold py-3 px-4 rounded-lg border-2 border-green-500 transition-all transform hover:scale-105"><BoltIcon/> {ability.name} ({ability.cost} EP)</button>
+            abilities.push(<button key={ability.name} onClick={() => handleActionClick('ability', ability.name)} disabled={disabled} className="flex items-center justify-center gap-2 text-lg bg-indigo-700 hover:bg-indigo-600 disabled:bg-gray-600 text-white font-bold py-3 px-4 rounded-lg border-2 border-indigo-500 transition-all transform hover:scale-105"><BoltIcon/> {ability.name} ({ability.cost} EP)</button>)
         }
-        return null;
+        return <div className="grid grid-cols-1 md:grid-cols-2 gap-2 col-span-full">{abilities}</div>;
     }
 
 
@@ -112,6 +124,17 @@ export const CombatView: React.FC<CombatViewProps> = ({ storyText, enemies, play
                         </div>
 
                         <StatusBar label="HP" currentValue={enemy.hp} maxValue={enemy.maxHp} colorClass="bg-red-500" />
+                        
+                        <div className="flex justify-center items-center gap-1.5 mt-2 h-5">
+                            {enemy.statusEffects.map(effect => (
+                                <div key={effect.type} className="relative group">
+                                    {statusEffectIcons[effect.type]}
+                                    <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 w-max bg-black/80 text-white text-xs rounded py-1 px-2 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10">
+                                        {STATUS_EFFECT_CONFIG[effect.type].name} ({effect.duration} turns)
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
                     </div>
                 ))}
             </div>
@@ -139,7 +162,7 @@ export const CombatView: React.FC<CombatViewProps> = ({ storyText, enemies, play
                     <div className="col-span-full flex flex-col gap-2 animate-fade-in-short">
                         <p className="text-center">Select Ability:</p>
                         {renderAbilities()}
-                        <button onClick={() => setView('main')} className="w-full text-lg bg-gray-600 hover:bg-gray-500 text-white font-bold py-2 px-3 rounded-lg border-2 border-gray-400">Back</button>
+                        <button onClick={() => setView('main')} className="w-full text-lg bg-gray-600 hover:bg-gray-500 text-white font-bold py-2 px-3 rounded-lg border-2 border-gray-400 mt-2">Back</button>
                     </div>
                 )}
             </div>

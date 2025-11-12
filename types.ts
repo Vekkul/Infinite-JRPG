@@ -14,6 +14,28 @@ export enum CharacterClass {
     ROGUE = 'Rogue',
 }
 
+export enum Element {
+    FIRE = 'FIRE',
+    ICE = 'ICE',
+    LIGHTNING = 'LIGHTNING',
+    EARTH = 'EARTH',
+    NONE = 'NONE',
+}
+
+export enum StatusEffectType {
+    BURN = 'BURN',       // DoT
+    CHILL = 'CHILL',     // -20% damage dealt
+    SHOCK = 'SHOCK',     // 10% chance to miss turn
+    GROUNDED = 'GROUNDED', // -20% defense (take more damage)
+    EARTH_ARMOR = 'EARTH_ARMOR', // +20% defense for player
+}
+
+export interface StatusEffect {
+  type: StatusEffectType;
+  duration: number;
+  sourceAttack?: number; // For BURN damage calculation
+}
+
 export enum ItemType {
   POTION = 'POTION',
 }
@@ -34,8 +56,9 @@ export enum AIPersonality {
 
 export enum PlayerAbility {
     FIREBALL = 'Fireball',
-    HEAVY_STRIKE = 'Heavy Strike',
-    QUICK_STRIKE = 'Quick Strike',
+    ICE_SHARD = 'Ice Shard',
+    EARTHEN_STRIKE = 'Earthen Strike',
+    LIGHTNING_STRIKE = 'Lightning Strike',
 }
 
 export interface Item {
@@ -63,6 +86,7 @@ export interface Player {
   xpToNextLevel: number;
   isDefending: boolean;
   inventory: Item[];
+  statusEffects: StatusEffect[];
 }
 
 export interface Enemy {
@@ -75,6 +99,8 @@ export interface Enemy {
   ability?: EnemyAbility;
   aiPersonality?: AIPersonality;
   isShielded?: boolean;
+  element?: Element;
+  statusEffects: StatusEffect[];
 }
 
 export interface GameAction {
@@ -177,4 +203,6 @@ export type Action =
   | { type: 'SET_SOCIAL_ENCOUNTER'; payload: SocialEncounter }
   | { type: 'RESOLVE_SOCIAL_CHOICE'; payload: { choice: SocialChoice } }
   | { type: 'SET_WORLD_DATA'; payload: WorldData }
-  | { type: 'MOVE_PLAYER'; payload: string }; // payload is targetLocationId
+  | { type: 'MOVE_PLAYER'; payload: string } // payload is targetLocationId
+  | { type: 'PROCESS_TURN_EFFECTS'; payload: { target: 'player' | 'enemy'; index?: number } }
+  | { type: 'APPLY_STATUS_EFFECT'; payload: { target: 'player' | 'enemy'; index?: number; effect: StatusEffect } };

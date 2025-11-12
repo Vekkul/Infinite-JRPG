@@ -1,6 +1,6 @@
-import { AppState, Action, GameState, Item, Player, CharacterClass, Enemy, RewardType, SocialChoice, MapLocation, PlayerAbility } from '../types';
+import { AppState, Action, GameState, Item, Player, CharacterClass, Enemy, RewardType, MapLocation, PlayerAbility, StatusEffect, StatusEffectType, Element } from '../types';
 import { initialState } from './initialState';
-import { CLASS_STATS, PLAYER_ABILITIES } from '../constants';
+import { CLASS_STATS, PLAYER_ABILITIES, ELEMENTAL_RESISTANCES, STATUS_EFFECT_CONFIG } from '../constants';
 
 const appendToLog = (log: string[], message: string): string[] => {
     return [...log.slice(-20), message];
@@ -52,13 +52,28 @@ const handleLevelUp = (currentPlayer: Player): { updatedPlayer: Player; logs: st
     } else if (updatedPlayer.class === CharacterClass.ROGUE) {
         const newMaxEp = (updatedPlayer.maxEp || 0) + 5;
         updatedPlayer.maxEp = newMaxEp;
-        // Fix: Corrected typo from newEp to newMaxEp
         updatedPlayer.ep = newMaxEp;
         logs.push('Max EP increased!');
     }
 
 
     return { updatedPlayer, logs };
+};
+
+const applyStatusEffect = (target: Player | Enemy, effect: StatusEffect): { target: Player | Enemy, log: string } => {
+    const newTarget = { ...target };
+    const existingEffectIndex = newTarget.statusEffects.findIndex(e => e.type === effect.type);
+
+    if (existingEffectIndex !== -1) {
+        // Refresh duration of existing effect
+        newTarget.statusEffects[existingEffectIndex] = { ...newTarget.statusEffects[existingEffectIndex], duration: effect.duration };
+    } else {
+        newTarget.statusEffects.push(effect);
+    }
+    
+    const logMessage = `${target.name} is afflicted with ${STATUS_EFFECT_CONFIG[effect.type].name}!`;
+
+    return { target: newTarget, log: logMessage };
 };
 
 
@@ -81,6 +96,7 @@ export const reducer = (state: AppState, action: Action): AppState => {
             name,
             class: characterClass,
             portrait,
+            statusEffects: [],
         };
 
         return {
@@ -175,45 +191,56 @@ export const reducer = (state: AppState, action: Action): AppState => {
         const newEnemies = [...state.enemies];
         const target = newEnemies[targetIndex];
         let newPlayerState = {...state.player};
+        
+        // Use resources
+        if (abilityDetails.resource === 'MP') {
+            newPlayerState.mp = (newPlayerState.mp || 0) - abilityDetails.cost;
+        } else if (abilityDetails.resource === 'EP') {
+            newPlayerState.ep = (newPlayerState.ep || 0) - abilityDetails.cost;
+        }
+        
+        let damage = Math.floor(state.player.attack * abilityDetails.damageMultiplier + (Math.random() * 5));
 
-        switch (ability) {
-            case PlayerAbility.FIREBALL: {
-                const damage = Math.floor(state.player.attack * 1.5 + (Math.random() * 8));
-                const damageTaken = target.isShielded ? Math.floor(damage / 2) : damage;
-                const newHp = Math.max(0, target.hp - damageTaken);
-                newEnemies[targetIndex] = { ...target, hp: newHp };
-                newPlayerState.mp = (newPlayerState.mp || 0) - abilityDetails.cost;
-                newLog = appendToLog(newLog, `You cast Fireball on ${target.name} for ${damageTaken} damage!`);
-                if (newHp <= 0) {
-                     newLog = appendToLog(newLog, `${target.name} is defeated!`);
-                }
-                break;
+        // Check for elemental resistance
+        if (target.element && ELEMENTAL_RESISTANCES[target.element] === abilityDetails.element) {
+            damage = Math.floor(damage / 2);
+            newLog = appendToLog(newLog, `${target.name} resists the ${abilityDetails.element} attack!`);
+        }
+
+        // Check for target status effects (Grounded)
+        if (target.statusEffects.some(e => e.type === StatusEffectType.GROUNDED)) {
+            damage = Math.floor(damage * (1 + STATUS_EFFECT_CONFIG.GROUNDED.defenseReduction));
+        }
+        
+        const damageTaken = target.isShielded ? Math.floor(damage / 2) : damage;
+        const newHp = Math.max(0, target.hp - damageTaken);
+        newEnemies[targetIndex] = { ...target, hp: newHp };
+        newLog = appendToLog(newLog, `You use ${abilityDetails.name} on ${target.name} for ${damageTaken} damage!`);
+        
+        if (newHp <= 0) {
+             newLog = appendToLog(newLog, `${target.name} is defeated!`);
+        } else if (abilityDetails.statusEffect && Math.random() < (abilityDetails.statusChance || 0)) {
+            // Apply status effect
+            const effect: StatusEffect = {
+                type: abilityDetails.statusEffect,
+                duration: STATUS_EFFECT_CONFIG[abilityDetails.statusEffect].duration,
+            };
+            if (effect.type === StatusEffectType.BURN) {
+                effect.sourceAttack = state.player.attack;
             }
-            case PlayerAbility.QUICK_STRIKE: {
-                const damage1 = Math.floor(state.player.attack * 0.8 + (Math.random() * 3));
-                const damage2 = Math.floor(state.player.attack * 0.8 + (Math.random() * 3));
-                const totalDamage = damage1 + damage2;
-                const damageTaken = target.isShielded ? Math.floor(totalDamage / 2) : totalDamage;
-                const newHp = Math.max(0, target.hp - damageTaken);
-                newEnemies[targetIndex] = { ...target, hp: newHp };
-                newPlayerState.ep = (newPlayerState.ep || 0) - abilityDetails.cost;
-                newLog = appendToLog(newLog, `You use Quick Strike on ${target.name} for ${damage1} and ${damage2} damage!`);
-                 if (newHp <= 0) {
-                     newLog = appendToLog(newLog, `${target.name} is defeated!`);
-                }
-                break;
-            }
-            case PlayerAbility.HEAVY_STRIKE: {
-                const damage = Math.floor(state.player.attack * 1.8 + (Math.random() * 6));
-                const damageTaken = target.isShielded ? Math.floor(damage / 2) : damage;
-                const newHp = Math.max(0, target.hp - damageTaken);
-                newEnemies[targetIndex] = { ...target, hp: newHp };
-                newLog = appendToLog(newLog, `You use Heavy Strike on ${target.name} for ${damageTaken} damage!`);
-                if (newHp <= 0) {
-                     newLog = appendToLog(newLog, `${target.name} is defeated!`);
-                }
-                break;
-            }
+            const { target: updatedTarget, log: effectLog } = applyStatusEffect(newEnemies[targetIndex], effect);
+            newEnemies[targetIndex] = updatedTarget as Enemy;
+            newLog = appendToLog(newLog, effectLog);
+        }
+        
+        // Apply Earthen Strike's defense boost to player
+        if (ability === PlayerAbility.EARTHEN_STRIKE) {
+            const { target: updatedPlayer, log: effectLog } = applyStatusEffect(newPlayerState, {
+                type: StatusEffectType.EARTH_ARMOR,
+                duration: STATUS_EFFECT_CONFIG.EARTH_ARMOR.duration,
+            });
+            newPlayerState = updatedPlayer as Player;
+            newLog = appendToLog(newLog, effectLog);
         }
 
         return { ...state, player: newPlayerState, enemies: newEnemies, log: newLog };
@@ -245,6 +272,7 @@ export const reducer = (state: AppState, action: Action): AppState => {
             hp: Math.min(state.player.maxHp, state.player.hp + regen.hp),
             mp: Math.min(state.player.maxMp || 0, (state.player.mp || 0) + regen.mp),
             ep: Math.min(state.player.maxEp || 0, (state.player.ep || 0) + regen.ep),
+            statusEffects: [], // Clear status effects after combat
         };
 
         if (regen.hp > 0) newLog = appendToLog(newLog, `Your warrior's resolve recovers you ${regen.hp} HP.`);
@@ -295,7 +323,6 @@ export const reducer = (state: AppState, action: Action): AppState => {
         const newEnemyHp = Math.min(enemy.maxHp, enemy.hp + healAmount);
         enemiesCopy[enemyIndex] = { ...enemy, hp: newEnemyHp };
 
-        // Player damage is now handled in App.tsx to prevent double-dipping
         return { ...state, enemies: enemiesCopy };
     }
 
@@ -304,6 +331,71 @@ export const reducer = (state: AppState, action: Action): AppState => {
       const enemiesCopy = [...state.enemies];
       enemiesCopy[enemyIndex] = { ...enemiesCopy[enemyIndex], isShielded: true };
       return { ...state, enemies: enemiesCopy };
+    }
+
+    case 'APPLY_STATUS_EFFECT': {
+        let newLog = [...state.log];
+        if (action.payload.target === 'player') {
+            const { target: updatedPlayer, log: effectLog } = applyStatusEffect(state.player, action.payload.effect);
+            newLog = appendToLog(newLog, effectLog);
+            return { ...state, player: updatedPlayer as Player, log: newLog };
+        } else if (action.payload.target === 'enemy' && action.payload.index !== undefined) {
+            const newEnemies = [...state.enemies];
+            const { target: updatedEnemy, log: effectLog } = applyStatusEffect(newEnemies[action.payload.index], action.payload.effect);
+            newEnemies[action.payload.index] = updatedEnemy as Enemy;
+            newLog = appendToLog(newLog, effectLog);
+            return { ...state, enemies: newEnemies, log: newLog };
+        }
+        return state;
+    }
+
+    case 'PROCESS_TURN_EFFECTS': {
+        let newLog = [...state.log];
+        let newPlayer = { ...state.player };
+        let newEnemies = [...state.enemies];
+
+        const processTarget = (target: Player | Enemy): { updatedTarget: Player | Enemy; logs: string[] } => {
+            let logs: string[] = [];
+            let updatedTarget = { ...target, statusEffects: [...target.statusEffects] };
+            let currentHp = 'hp' in updatedTarget ? updatedTarget.hp : 0;
+            
+            const remainingEffects: StatusEffect[] = [];
+
+            for (const effect of updatedTarget.statusEffects) {
+                // Apply effects
+                switch(effect.type) {
+                    case StatusEffectType.BURN:
+                        const burnDamage = Math.floor((effect.sourceAttack || 5) * 0.5);
+                        currentHp = Math.max(0, currentHp - burnDamage);
+                        logs.push(`${updatedTarget.name} takes ${burnDamage} damage from Burn!`);
+                        break;
+                }
+
+                // Decrement duration
+                const newDuration = effect.duration - 1;
+                if (newDuration > 0) {
+                    remainingEffects.push({ ...effect, duration: newDuration });
+                } else {
+                    logs.push(`${STATUS_EFFECT_CONFIG[effect.type].name} has worn off from ${updatedTarget.name}.`);
+                }
+            }
+            
+            updatedTarget.hp = currentHp;
+            updatedTarget.statusEffects = remainingEffects;
+            return { updatedTarget, logs };
+        };
+        
+        if (action.payload.target === 'player') {
+            const { updatedTarget, logs } = processTarget(state.player);
+            newPlayer = updatedTarget as Player;
+            logs.forEach(l => newLog = appendToLog(newLog, l));
+        } else if (action.payload.target === 'enemy' && action.payload.index !== undefined) {
+            const { updatedTarget, logs } = processTarget(state.enemies[action.payload.index]);
+            newEnemies[action.payload.index] = updatedTarget as Enemy;
+            logs.forEach(l => newLog = appendToLog(newLog, l));
+        }
+
+        return { ...state, player: newPlayer, enemies: newEnemies, log: newLog };
     }
 
     case 'SET_SOCIAL_ENCOUNTER':

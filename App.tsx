@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef, useReducer } from 'react';
-import { GameState, Player, Enemy, GameAction, Item, ItemType, SaveData, CharacterClass, EnemyAbility, SocialChoice, AIPersonality, PlayerAbility } from './types';
+import { GameState, Player, Enemy, GameAction, Item, ItemType, SaveData, CharacterClass, EnemyAbility, SocialChoice, AIPersonality, PlayerAbility, Element, StatusEffectType, StatusEffect, WorldData } from './types';
 import { generateScene, generateEncounter, generateSocialEncounter, generateWorldData, generateExploreResult, generateSpeech } from './services/geminiService';
 import { Inventory } from './components/Inventory';
 import { reducer } from './state/reducer';
@@ -14,8 +14,8 @@ import { SocialEncounterView } from './components/views/SocialEncounterView';
 import { WorldMapView } from './components/views/WorldMapView';
 import { LogView } from './components/views/LogView';
 import { StatusBar } from './components/StatusBar';
-import { HeartIcon, StarIcon, SaveIcon, BoltIcon, FireIcon, MapIcon, BagIcon, SpeakerOnIcon, SpeakerOffIcon, BookIcon } from './components/icons';
-import { JRPG_SAVE_KEY, CRIT_CHANCE, CRIT_MULTIPLIER, FLEE_CHANCE, TRAVEL_ENCOUNTER_CHANCE } from './constants';
+import { HeartIcon, StarIcon, SaveIcon, BoltIcon, FireIcon, MapIcon, BagIcon, SpeakerOnIcon, SpeakerOffIcon, BookIcon, ShieldIcon } from './components/icons';
+import { JRPG_SAVE_KEY, CRIT_CHANCE, CRIT_MULTIPLIER, FLEE_CHANCE, TRAVEL_ENCOUNTER_CHANCE, STATUS_EFFECT_CONFIG, ENEMY_STATUS_CHANCE, ENEMY_STATUS_MAP } from './constants';
 
 function decode(base64: string) {
   const binaryString = atob(base64);
@@ -51,6 +51,41 @@ interface EventPopup {
   text: string;
   type: 'info' | 'heal' | 'item' | 'xp';
 }
+
+const statusEffectIcons: Record<StatusEffectType, React.ReactNode> = {
+    [StatusEffectType.BURN]: <FireIcon className="w-5 h-5 text-orange-400" />,
+    [StatusEffectType.CHILL]: <span className="text-cyan-400 text-xl">❄️</span>,
+    [StatusEffectType.SHOCK]: <BoltIcon className="w-5 h-5 text-yellow-400" />,
+    [StatusEffectType.GROUNDED]: <span className="text-amber-700 text-xl">⛰️</span>,
+    [StatusEffectType.EARTH_ARMOR]: <ShieldIcon className="w-5 h-5 text-green-500" />,
+};
+
+// Helper function to build and sanitize scene actions
+const getSceneActions = (localActions: GameAction[], worldData: WorldData, playerLocationId: string): GameAction[] => {
+    // Filter out any potential 'move' actions returned by the LLM from local actions
+    const filteredLocalActions = localActions.filter(a => a.type !== 'move');
+
+    // De-duplicate move actions based on target location ID
+    const moveTargetIds = new Set<string>();
+    worldData.connections
+        .filter(c => c.from === playerLocationId || c.to === playerLocationId)
+        .forEach(c => {
+            const targetId = c.from === playerLocationId ? c.to : c.from;
+            moveTargetIds.add(targetId);
+        });
+
+    const moveActions = Array.from(moveTargetIds).map(targetId => {
+        const targetLocation = worldData.locations.find(l => l.id === targetId);
+        return {
+            label: `Go to ${targetLocation?.name || '???' }`,
+            type: 'move' as const,
+            targetLocationId: targetId
+        };
+    });
+
+    return [...filteredLocalActions, ...moveActions];
+}
+
 
 const App: React.FC = () => {
     const [state, dispatch] = useReducer(reducer, initialState);
@@ -211,22 +246,11 @@ const App: React.FC = () => {
         const startLocation = newWorldData.locations.find(l => l.id === newWorldData.startLocationId);
         if (startLocation) {
             const tempPlayer = { ...initialState.player, name: details.name, class: details.class, portrait: details.portrait };
-            const { description, actions, foundItem, isFallback } = await generateScene(tempPlayer, startLocation);
+            const { description, actions: localActions, foundItem, isFallback } = await generateScene(tempPlayer, startLocation);
             
             if (isFallback) handleFallback();
 
-            const moveActions = newWorldData.connections
-                .filter(c => c.from === startLocation.id || c.to === startLocation.id)
-                .map(c => {
-                    const targetId = c.from === startLocation.id ? c.to : c.from;
-                    const targetLocation = newWorldData.locations.find(l => l.id === targetId);
-                    return {
-                        label: `Go to ${targetLocation?.name || '???' }`,
-                        type: 'move' as const,
-                        targetLocationId: targetId
-                    };
-                });
-            const allActions = [...actions, ...moveActions];
+            const allActions = getSceneActions(localActions, newWorldData, newWorldData.startLocationId);
 
             dispatch({ type: 'SET_SCENE', payload: { description: description, actions: allActions } });
             if (foundItem) {
@@ -297,23 +321,19 @@ const App: React.FC = () => {
                 socialEncounter.description = `${result.outcome} ${socialEncounter.description}`;
                 dispatch({ type: 'SET_SOCIAL_ENCOUNTER', payload: socialEncounter });
             } else {
-                const currentLocation = worldData?.locations.find(l => l.id === playerLocationId);
-                if (currentLocation) {
-                    const { actions: localActions, foundItem, isFallback } = await generateScene(player, currentLocation);
-                    if(isFallback) handleFallback();
-                    
-                    const moveActions = worldData.connections
-                        .filter(c => c.from === playerLocationId || c.to === playerLocationId)
-                        .map(c => {
-                            const targetId = c.from === playerLocationId ? c.to : c.from;
-                            const targetLocation = worldData.locations.find(l => l.id === targetId);
-                            return { label: `Go to ${targetLocation?.name || '???' }`, type: 'move' as const, targetLocationId: targetId };
-                        });
-    
-                    dispatch({ type: 'SET_SCENE', payload: { description: result.outcome, actions: [...localActions, ...moveActions] } });
-    
-                    if (foundItem) {
-                        handleFoundItem(foundItem);
+                if (worldData && playerLocationId) {
+                    const currentLocation = worldData.locations.find(l => l.id === playerLocationId);
+                    if (currentLocation) {
+                        const { actions: localActions, foundItem, isFallback } = await generateScene(player, currentLocation);
+                        if(isFallback) handleFallback();
+                        
+                        const newActions = getSceneActions(localActions, worldData, playerLocationId);
+        
+                        dispatch({ type: 'SET_SCENE', payload: { description: result.outcome, actions: newActions } });
+        
+                        if (foundItem) {
+                            handleFoundItem(foundItem);
+                        }
                     }
                 }
                 dispatch({ type: 'SET_GAME_STATE', payload: GameState.EXPLORING });
@@ -352,18 +372,10 @@ const App: React.FC = () => {
                     } else {
                         const { description, actions: localActions, foundItem, isFallback } = await generateScene(player, newLocation);
                         if (isFallback) handleFallback();
-                         const moveActions = worldData.connections
-                            .filter(c => c.from === playerLocationId || c.to === playerLocationId)
-                            .map(c => {
-                                const targetId = c.from === playerLocationId ? c.to : c.from;
-                                const targetLocation = worldData.locations.find(l => l.id === targetId);
-                                return {
-                                    label: `Go to ${targetLocation?.name || '???' }`,
-                                    type: 'move' as const,
-                                    targetLocationId: targetId
-                                };
-                            });
-                        dispatch({ type: 'SET_SCENE', payload: { description, actions: [...localActions, ...moveActions] } });
+                         
+                        const newActions = getSceneActions(localActions, worldData, playerLocationId);
+                        dispatch({ type: 'SET_SCENE', payload: { description, actions: newActions } });
+
                         if (foundItem) handleFoundItem(foundItem);
                         dispatch({ type: 'SET_GAME_STATE', payload: GameState.EXPLORING });
                     }
@@ -408,19 +420,9 @@ const App: React.FC = () => {
         const { description, actions: localActions, foundItem, isFallback } = await generateScene(player, currentLocation);
         if (isFallback) handleFallback();
 
-        const moveActions = worldData.connections
-            .filter(c => c.from === playerLocationId || c.to === playerLocationId)
-            .map(c => {
-                const targetId = c.from === playerLocationId ? c.to : c.from;
-                const targetLocation = worldData.locations.find(l => l.id === targetId);
-                return {
-                    label: `Go to ${targetLocation?.name || '???' }`,
-                    type: 'move' as const,
-                    targetLocationId: targetId
-                };
-            });
+        const newActions = getSceneActions(localActions, worldData, playerLocationId);
 
-        dispatch({ type: 'SET_SCENE', payload: { description, actions: [...localActions, ...moveActions] } });
+        dispatch({ type: 'SET_SCENE', payload: { description, actions: newActions } });
         if (foundItem) handleFoundItem(foundItem);
         dispatch({ type: 'SET_GAME_STATE', payload: GameState.EXPLORING });
 
@@ -434,6 +436,8 @@ const App: React.FC = () => {
 
         dispatch({ type: 'SET_PLAYER_TURN', payload: false });
         dispatch({ type: 'UPDATE_PLAYER', payload: { isDefending: false } });
+        
+        dispatch({ type: 'PROCESS_TURN_EFFECTS', payload: { target: 'player' } });
 
         if (action === 'attack' && payload?.targetIndex !== undefined) {
             const target = enemies[payload.targetIndex];
@@ -442,6 +446,12 @@ const App: React.FC = () => {
             if (isCrit) {
                 damage = Math.floor(damage * CRIT_MULTIPLIER);
             }
+
+            // Apply GROUNDED damage modifier
+            if (target.statusEffects.some(e => e.type === StatusEffectType.GROUNDED)) {
+                damage = Math.floor(damage * (1 + STATUS_EFFECT_CONFIG.GROUNDED.defenseReduction));
+            }
+
             const damageTaken = target.isShielded ? Math.floor(damage / 2) : damage;
             const newHp = Math.max(0, target.hp - damageTaken);
 
@@ -487,19 +497,9 @@ const App: React.FC = () => {
                 const { actions: localActions, foundItem, isFallback } = await generateScene(player, currentLocation);
                 if (isFallback) handleFallback();
                 
-                const moveActions = worldData.connections
-                    .filter(c => c.from === playerLocationId || c.to === playerLocationId)
-                    .map(c => {
-                        const targetId = c.from === playerLocationId ? c.to : c.from;
-                        const targetLocation = worldData.locations.find(l => l.id === targetId);
-                        return {
-                            label: `Go to ${targetLocation?.name || '???' }`,
-                            type: 'move' as const,
-                            targetLocationId: targetId
-                        };
-                    });
+                const newActions = getSceneActions(localActions, worldData, playerLocationId);
                 
-                dispatch({ type: 'SET_SCENE', payload: { description: choice.outcome, actions: [...localActions, ...moveActions] } });
+                dispatch({ type: 'SET_SCENE', payload: { description: choice.outcome, actions: newActions } });
     
                 if (foundItem) {
                     handleFoundItem(foundItem);
@@ -547,7 +547,14 @@ const App: React.FC = () => {
                 if (enemies[i].hp > 0 && currentHp > 0) { 
                 await new Promise(resolve => setTimeout(resolve, 1000));
                 
-                const enemy = enemies[i];
+                dispatch({ type: 'PROCESS_TURN_EFFECTS', payload: { target: 'enemy', index: i } });
+                const enemy = state.enemies[i]; // Get latest state after dispatch
+
+                // SHOCK check
+                if (enemy.statusEffects.some(e => e.type === StatusEffectType.SHOCK) && Math.random() < STATUS_EFFECT_CONFIG.SHOCK.stunChance) {
+                    appendToLog(`${enemy.name} is Shocked and unable to move!`);
+                    continue;
+                }
                 
                 if (enemy.isShielded) {
                     dispatch({ type: 'UPDATE_ENEMY', payload: { index: i, data: { isShielded: false } } });
@@ -594,14 +601,43 @@ const App: React.FC = () => {
                 } else {
                     const isCrit = Math.random() < CRIT_CHANCE;
                     let enemyDamage = Math.floor(enemy.attack + (Math.random() * 4 - 2));
+
+                    // CHILL check
+                    if (enemy.statusEffects.some(e => e.type === StatusEffectType.CHILL)) {
+                        enemyDamage = Math.floor(enemyDamage * (1 - STATUS_EFFECT_CONFIG.CHILL.damageReduction));
+                    }
+
                     if(isCrit) {
                         enemyDamage = Math.floor(enemyDamage * CRIT_MULTIPLIER);
                     }
+                    
                     let playerDamageTaken = player.isDefending ? Math.max(1, Math.floor(enemyDamage / 2)) : enemyDamage;
+                    
+                    // Player GROUNDED/EARTH_ARMOR check
+                    if (player.statusEffects.some(e => e.type === StatusEffectType.GROUNDED)) {
+                        playerDamageTaken = Math.floor(playerDamageTaken * (1 + STATUS_EFFECT_CONFIG.GROUNDED.defenseReduction));
+                    }
+                     if (player.statusEffects.some(e => e.type === StatusEffectType.EARTH_ARMOR)) {
+                        playerDamageTaken = Math.floor(playerDamageTaken * (1 - STATUS_EFFECT_CONFIG.EARTH_ARMOR.defenseBonus));
+                    }
+
                     const newPlayerHp = Math.max(0, currentHp - playerDamageTaken);
                     currentHp = newPlayerHp;
                     dispatch({ type: 'UPDATE_PLAYER', payload: { hp: newPlayerHp } });
                     appendToLog(`${enemy.name} attacks! You take ${playerDamageTaken} damage. ${isCrit ? 'CRITICAL!' : ''}`);
+
+                    // Apply status effect from enemy attack
+                    if (enemy.element && enemy.element !== Element.NONE && Math.random() < ENEMY_STATUS_CHANCE[enemy.element]) {
+                        const effectType = ENEMY_STATUS_MAP[enemy.element];
+                        const effect: StatusEffect = {
+                            type: effectType,
+                            duration: STATUS_EFFECT_CONFIG[effectType].duration
+                        };
+                        if(effect.type === StatusEffectType.BURN) {
+                            effect.sourceAttack = enemy.attack;
+                        }
+                        dispatch({type: 'APPLY_STATUS_EFFECT', payload: { target: 'player', effect }})
+                    }
                 }
 
                 if (currentHp <= 0) {
@@ -617,7 +653,7 @@ const App: React.FC = () => {
         }
         enemyTurnInProgress.current = false;
 
-    }, [enemies, player, appendToLog, createEventPopup]);
+    }, [enemies, player, appendToLog, createEventPopup, state.enemies]);
 
     const handleCombatVictory = useCallback(async (defeatedEnemies: Enemy[]) => {
         const totalXpGained = defeatedEnemies.reduce((sum, e) => sum + Math.floor(e.maxHp / 2) + e.attack, 0);
@@ -782,6 +818,16 @@ const App: React.FC = () => {
                                                     <span className="absolute inset-0 text-center text-white text-xs leading-4" style={{textShadow: '1px 1px 1px #000'}}>{player.xp}/{player.xpToNextLevel}</span>
                                                 </div>
                                             </div>
+                                        </div>
+                                         <div className="flex justify-start items-center gap-2 mt-2 h-6">
+                                            {player.statusEffects.map(effect => (
+                                                <div key={effect.type} className="relative group bg-black/50 p-1 rounded-full">
+                                                    {statusEffectIcons[effect.type]}
+                                                    <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 w-max bg-black/80 text-white text-xs rounded py-1 px-2 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10">
+                                                        {STATUS_EFFECT_CONFIG[effect.type].name} ({effect.duration} turns)
+                                                    </div>
+                                                </div>
+                                            ))}
                                         </div>
                                     </div>
                                 </div>

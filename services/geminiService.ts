@@ -1,5 +1,5 @@
 import { GoogleGenAI, Type, Modality } from "@google/genai";
-import { Player, Enemy, GameAction, Item, ItemType, EnemyAbility, CharacterClass, SocialEncounter, RewardType, AIPersonality, MapLocation, WorldData } from '../types';
+import { Player, Enemy, GameAction, Item, ItemType, EnemyAbility, CharacterClass, SocialEncounter, RewardType, AIPersonality, MapLocation, WorldData, Element } from '../types';
 
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY as string });
 
@@ -101,6 +101,10 @@ const enemySchema = {
         aiPersonality: {
             type: Type.STRING,
             description: `The monster's combat AI. Determines its behavior. Can be one of: '${AIPersonality.AGGRESSIVE}' (attacks often), '${AIPersonality.DEFENSIVE}' (heals/shields when low HP), '${AIPersonality.STRATEGIC}' (balances attack and defense), or '${AIPersonality.WILD}' (unpredictable). Assign strategically based on the monster's concept and abilities.`
+        },
+        element: {
+            type: Type.STRING,
+            description: `An optional elemental affinity for the monster. Can be one of: '${Element.FIRE}', '${Element.ICE}', '${Element.LIGHTNING}', '${Element.EARTH}'. Omit for non-elemental monsters.`
         }
     },
     required: ["name", "description", "hp", "attack"]
@@ -261,7 +265,7 @@ export const generateEncounter = async (player: Player): Promise<{ enemies: Enem
 
         const response = await ai.models.generateContent({
             model: TEXT_MODEL,
-            contents: `Generate a fantasy JRPG monster encounter for a player who is level ${player.level}. Generate exactly ${numMonsters} monster(s). Some might have special abilities like healing, shielding, multi-attack, or drain life. The encounter should be a suitable challenge.`,
+            contents: `Generate a fantasy JRPG monster encounter for a player who is level ${player.level}. Generate exactly ${numMonsters} monster(s). Some might have special abilities like healing or shielding. Monsters can also have an elemental affinity (Fire, Ice, Lightning, Earth), which will affect their attacks and resistances. The encounter should be a suitable challenge.`,
             config: {
                 systemInstruction: SYSTEM_INSTRUCTION,
                 responseMimeType: "application/json",
@@ -270,11 +274,11 @@ export const generateEncounter = async (player: Player): Promise<{ enemies: Enem
             },
         });
 
-        const data = JSON.parse(response.text) as Omit<Enemy, 'maxHp' | 'isShielded'>[];
+        const data = JSON.parse(response.text) as Omit<Enemy, 'maxHp' | 'isShielded' | 'statusEffects'>[];
         if (!Array.isArray(data) || data.length === 0) {
             throw new Error("Invalid response format from API");
         }
-        return { enemies: data.map(enemy => ({ ...enemy, maxHp: enemy.hp, isShielded: false })) };
+        return { enemies: data.map(enemy => ({ ...enemy, maxHp: enemy.hp, isShielded: false, statusEffects: [] })) };
     } catch (error) {
         console.error("Error generating encounter:", error);
         // Fallback enemy
@@ -288,6 +292,7 @@ export const generateEncounter = async (player: Player): Promise<{ enemies: Enem
                 maxHp: hp,
                 attack: attack,
                 isShielded: false,
+                statusEffects: [],
                 aiPersonality: AIPersonality.AGGRESSIVE,
             }],
             isFallback: true,
