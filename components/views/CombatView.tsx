@@ -34,7 +34,7 @@ export const CombatView: React.FC<CombatViewProps> = ({ storyText, enemies, play
     const [selectedAbility, setSelectedAbility] = useState<PlayerAbility | null>(null);
     const [damagePopups, setDamagePopups] = useState<DamagePopup[]>([]);
 
-    const displayedText = useTypewriter(storyText, 30);
+    const displayedText = useTypewriter(storyText, 20);
     const activeEnemies = enemies.filter(e => e.hp > 0);
 
     const createDamagePopup = (damage: number, isCrit: boolean, enemyIndex: number) => {

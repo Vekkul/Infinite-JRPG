@@ -9,7 +9,7 @@ interface ExploringViewProps {
 }
 
 export const ExploringView: React.FC<ExploringViewProps> = ({ storyText, actions, onAction }) => {
-  const displayedText = useTypewriter(storyText, 30);
+  const displayedText = useTypewriter(storyText, 20);
 
   return (
     <div className="flex flex-col h-full">

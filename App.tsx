@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef, useReducer } from 'react';
 import { GameState, Player, Enemy, GameAction, Item, ItemType, SaveData, CharacterClass, EnemyAbility, SocialChoice, AIPersonality, PlayerAbility, Element, StatusEffectType, StatusEffect, WorldData } from './types';
-import { generateScene, generateEncounter, generateSocialEncounter, generateWorldData, generateExploreResult, generateSpeech } from './services/geminiService';
+import { generateScene, generateEncounter, generateSocialEncounter, generateWorldData, generateExploreResult, generateSpeech, generateSceneAfterSocial } from './services/geminiService';
 import { Inventory } from './components/Inventory';
 import { reducer } from './state/reducer';
 import { initialState } from './state/initialState';
@@ -494,12 +494,13 @@ const App: React.FC = () => {
         if (worldData && playerLocationId) {
             const currentLocation = worldData.locations.find(l => l.id === playerLocationId);
             if (currentLocation) {
-                const { actions: localActions, foundItem, isFallback } = await generateScene(player, currentLocation);
+                // Generate a new scene that is contextually aware of the choice's outcome
+                const { description, actions: localActions, foundItem, isFallback } = await generateSceneAfterSocial(player, currentLocation, choice.outcome);
                 if (isFallback) handleFallback();
                 
                 const newActions = getSceneActions(localActions, worldData, playerLocationId);
                 
-                dispatch({ type: 'SET_SCENE', payload: { description: choice.outcome, actions: newActions } });
+                dispatch({ type: 'SET_SCENE', payload: { description, actions: newActions } });
     
                 if (foundItem) {
                     handleFoundItem(foundItem);

@@ -8,7 +8,7 @@ interface SocialEncounterViewProps {
 }
 
 export const SocialEncounterView: React.FC<SocialEncounterViewProps> = ({ encounter, onChoice }) => {
-  const displayedText = useTypewriter(encounter.description, 30);
+  const displayedText = useTypewriter(encounter.description, 20);
 
   return (
     <div className="flex flex-col h-full">
