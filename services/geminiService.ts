@@ -5,7 +5,7 @@ import { Player, GameAction, Item, ItemType, EnemyAbility, CharacterClass, Socia
 const getAi = () => new GoogleGenAI({ apiKey: process.env.API_KEY as string });
 
 const TEXT_MODEL = 'gemini-2.5-flash';
-const IMAGE_MODEL = 'gemini-2.5-flash-image';
+const IMAGEN_MODEL = 'imagen-4.0-generate-001';
 const TTS_MODEL = 'gemini-2.5-flash-preview-tts';
 
 const SYSTEM_INSTRUCTION = "You are a creative and engaging dungeon master for a classic fantasy JRPG. Your descriptions are vivid, your monsters are menacing, and your scenarios are intriguing. Keep the tone epic and adventurous, with a slightly retro feel. Responses must adhere to the provided JSON schema.";
@@ -367,27 +367,19 @@ export const generateSocialEncounter = async (player: Player): Promise<{ encount
 
 export const generateCharacterPortrait = async (description: string, characterClass: CharacterClass): Promise<{ portrait: string; isFallback?: boolean; }> => {
     try {
-        const response = await getAi().models.generateContent({
-            model: IMAGE_MODEL,
-            contents: {
-                parts: [
-                    {
-                        text: `A 16-bit pixel art portrait of a JRPG character. Class: ${characterClass}. Description: ${description}. Vibrant colors, fantasy style, head and shoulders view.`,
-                    },
-                ],
-            },
+        const response = await getAi().models.generateImages({
+            model: IMAGEN_MODEL,
+            prompt: `A 16-bit pixel art portrait of a JRPG character. Class: ${characterClass}. Description: ${description}. Vibrant colors, fantasy style, head and shoulders view.`,
             config: {
-                responseModalities: [Modality.IMAGE],
+                numberOfImages: 1,
+                outputMimeType: 'image/png',
+                aspectRatio: '1:1',
             },
         });
 
-        const parts = response.candidates?.[0]?.content?.parts;
-        if (parts) {
-            for (const part of parts) {
-                if (part.inlineData) {
-                    return { portrait: part.inlineData.data };
-                }
-            }
+        const base64ImageBytes = response.generatedImages?.[0]?.image?.imageBytes;
+        if (base64ImageBytes) {
+            return { portrait: base64ImageBytes };
         }
         throw new Error("No image data found in response.");
 
@@ -400,34 +392,24 @@ export const generateCharacterPortrait = async (description: string, characterCl
 export const generateWorldData = async (): Promise<WorldData | null> => {
     try {
         // Step 1: Generate the world map image.
-        const imageResponse = await getAi().models.generateContent({
-            model: IMAGE_MODEL,
-            contents: {
-                parts: [
-                    {
-                        text: `Generate a top-down, 16-bit pixel art style JRPG world map. The map should feature diverse biomes like lush forests, snowy mountains, villages, a large castle, and a coastline. IMPORTANT: The map image must be clean and contain absolutely no text, no labels, no icons, and no UI elements. It is a background image only.`,
-                    },
-                ],
-            },
+        const imageResponse = await getAi().models.generateImages({
+            model: IMAGEN_MODEL,
+            prompt: `Generate a top-down, 16-bit pixel art style JRPG world map. The map should feature diverse biomes like lush forests, snowy mountains, villages, a large castle, and a coastline. IMPORTANT: The map image must be clean and contain absolutely no text, no labels, no icons, and no UI elements. It is a background image only.`,
             config: {
-                responseModalities: [Modality.IMAGE],
+                numberOfImages: 1,
+                outputMimeType: 'image/png',
+                aspectRatio: '16:9',
             },
         });
 
         let image = "";
-        let imageMimeType = "";
-        const imageParts = imageResponse.candidates?.[0]?.content?.parts;
-        if (imageParts) {
-            for (const part of imageParts) {
-                if (part.inlineData) {
-                    image = part.inlineData.data;
-                    imageMimeType = part.inlineData.mimeType;
-                    break;
-                }
-            }
+        const imageBytes = imageResponse.generatedImages?.[0]?.image?.imageBytes;
+        
+        if (imageBytes) {
+             image = imageBytes;
         }
 
-        if (!image || !imageMimeType) throw new Error("No image data found in response for world map.");
+        if (!image) throw new Error("No image data found in response for world map.");
 
         // Step 2: Analyze the generated image to create coherent world data.
         const worldDataResponse = await getAi().models.generateContent({
@@ -436,7 +418,7 @@ export const generateWorldData = async (): Promise<WorldData | null> => {
                 parts: [
                     {
                         inlineData: {
-                            mimeType: imageMimeType,
+                            mimeType: 'image/png',
                             data: image,
                         },
                     },
