@@ -1,4 +1,3 @@
-
 import React from 'react';
 
 interface StatusBarProps {
@@ -8,7 +7,7 @@ interface StatusBarProps {
   label: string;
 }
 
-export const StatusBar: React.FC<StatusBarProps> = ({ currentValue, maxValue, colorClass, label }) => {
+export const StatusBar = React.memo<StatusBarProps>(({ currentValue, maxValue, colorClass, label }) => {
   const percentage = Math.max(0, (currentValue / maxValue) * 100);
 
   return (
@@ -25,4 +24,4 @@ export const StatusBar: React.FC<StatusBarProps> = ({ currentValue, maxValue, co
       </div>
     </div>
   );
-};
+});

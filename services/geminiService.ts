@@ -1,7 +1,8 @@
 import { GoogleGenAI, Type, Modality } from "@google/genai";
-import { Player, Enemy, GameAction, Item, ItemType, EnemyAbility, CharacterClass, SocialEncounter, RewardType, AIPersonality, MapLocation, WorldData, Element } from '../types';
+import { Player, GameAction, Item, ItemType, EnemyAbility, CharacterClass, SocialEncounter, RewardType, AIPersonality, MapLocation, WorldData, Element, Enemy } from '../types';
 
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY as string });
+// Helper to get a fresh instance of the API client
+const getAi = () => new GoogleGenAI({ apiKey: process.env.API_KEY as string });
 
 const TEXT_MODEL = 'gemini-2.5-flash';
 const IMAGE_MODEL = 'gemini-2.5-flash-image';
@@ -116,22 +117,20 @@ const encounterSchema = {
     items: enemySchema,
 };
 
-const rewardSchema = {
-    type: Type.OBJECT,
-    properties: {
-        type: { type: Type.STRING, description: `The type of reward. Must be one of: '${RewardType.XP}', '${RewardType.ITEM}'.` },
-        value: { type: Type.INTEGER, description: "For XP, the amount gained. Between 25 and 75." },
-        item: { ...itemSchema, description: "For an ITEM reward, describe the item."}
-    },
-    required: ["type"]
-};
-
 const socialChoiceSchema = {
     type: Type.OBJECT,
     properties: {
         label: { type: Type.STRING, description: "A short label for the choice button (e.g., 'Help the merchant', 'Ignore him'). Max 5 words." },
         outcome: { type: Type.STRING, description: "The resulting story text if this choice is made. Max 60 words." },
-        reward: { ...rewardSchema, description: "An optional reward for this choice. Not every choice should have a reward." }
+        reward: {
+            type: Type.OBJECT,
+            properties: {
+                type: { type: Type.STRING, description: `The type of reward. Must be one of: '${RewardType.XP}', '${RewardType.ITEM}'.` },
+                value: { type: Type.INTEGER, description: "For XP, the amount gained. Between 25 and 75." },
+                item: { ...itemSchema, description: "For an ITEM reward, describe the item."}
+            },
+            required: ["type"]
+        }
     },
     required: ["label", "outcome"]
 };
@@ -193,7 +192,7 @@ const worldDataSchema = {
 
 export const generateExploreResult = async (player: Player, action: GameAction): Promise<{ outcome: string; foundItem?: Omit<Item, 'quantity'>; triggerCombat: boolean; triggerSocial: boolean; isFallback?: boolean; }> => {
     try {
-        const response = await ai.models.generateContent({
+        const response = await getAi().models.generateContent({
             model: TEXT_MODEL,
             contents: `The player, a level ${player.level} ${player.class}, decided to perform the action: "${action.label}". Generate a contextually appropriate outcome. The action should not always lead to combat; for example, reading a sign should provide information, not start a fight. The outcome description will replace the current scene text.`,
             config: {
@@ -215,7 +214,6 @@ export const generateExploreResult = async (player: Player, action: GameAction):
 
     } catch (error) {
         console.error("Error generating explore result:", error);
-        // Fallback result
         return {
             outcome: "You cautiously proceed, but find nothing of interest. The path ahead remains.",
             triggerCombat: false,
@@ -227,7 +225,7 @@ export const generateExploreResult = async (player: Player, action: GameAction):
 
 export const generateScene = async (player: Player, location: MapLocation): Promise<{ description: string; actions: GameAction[]; foundItem?: Omit<Item, 'quantity'>; isFallback?: boolean; }> => {
     try {
-        const response = await ai.models.generateContent({
+        const response = await getAi().models.generateContent({
             model: TEXT_MODEL,
             contents: `Generate a new scene for a JRPG player at level ${player.level}. The player has just arrived at ${location.name}: "${location.description}". Generate a vivid description and 1-2 thematically appropriate local actions.`,
             config: {
@@ -247,7 +245,6 @@ export const generateScene = async (player: Player, location: MapLocation): Prom
         };
     } catch (error) {
         console.error("Error generating scene:", error);
-        // Fallback in case of API error
         return {
             description: `You have arrived at ${location.name}. An ancient path winds before you, shrouded in an eerie silence. The air is thick with unspoken magic.`,
             actions: [
@@ -261,7 +258,7 @@ export const generateScene = async (player: Player, location: MapLocation): Prom
 
 export const generateSceneAfterSocial = async (player: Player, location: MapLocation, choiceOutcome: string): Promise<{ description: string; actions: GameAction[]; foundItem?: Omit<Item, 'quantity'>; isFallback?: boolean; }> => {
     try {
-        const response = await ai.models.generateContent({
+        const response = await getAi().models.generateContent({
             model: TEXT_MODEL,
             contents: `A level ${player.level} ${player.class} player is at ${location.name} (${location.description}). The following event just occurred: "${choiceOutcome}". Generate a new, vivid scene description that continues from this outcome, and create 1-2 new, thematically appropriate local actions. The new description should NOT repeat the outcome text, but flow naturally from it.`,
             config: {
@@ -281,7 +278,6 @@ export const generateSceneAfterSocial = async (player: Player, location: MapLoca
         };
     } catch (error) {
         console.error("Error generating scene after social encounter:", error);
-        // Fallback in case of API error
         return {
             description: `${choiceOutcome} The area is now quiet. You contemplate your next move.`,
             actions: [
@@ -296,7 +292,7 @@ export const generateEncounter = async (player: Player): Promise<{ enemies: Enem
      try {
         const numMonsters = Math.floor(Math.random() * 3) + 1; // 1, 2, or 3
 
-        const response = await ai.models.generateContent({
+        const response = await getAi().models.generateContent({
             model: TEXT_MODEL,
             contents: `Generate a fantasy JRPG monster encounter for a player who is level ${player.level}. Generate exactly ${numMonsters} monster(s). Some might have special abilities like healing or shielding. Monsters can also have an elemental affinity (Fire, Ice, Lightning, Earth), which will affect their attacks and resistances. The encounter should be a suitable challenge.`,
             config: {
@@ -335,7 +331,7 @@ export const generateEncounter = async (player: Player): Promise<{ enemies: Enem
 
 export const generateSocialEncounter = async (player: Player): Promise<{ encounter: SocialEncounter; isFallback?: boolean; }> => {
     try {
-        const response = await ai.models.generateContent({
+        const response = await getAi().models.generateContent({
             model: TEXT_MODEL,
             contents: `Generate a social, non-combat encounter for a level ${player.level} ${player.class} in a JRPG. The situation should present a clear choice with two distinct outcomes. One choice might offer a small reward like XP or an item.`,
             config: {
@@ -349,7 +345,6 @@ export const generateSocialEncounter = async (player: Player): Promise<{ encount
     } catch (error)
         {
         console.error("Error generating social encounter:", error);
-        // Fallback social encounter
         return {
             encounter: {
                 description: "You come across an old merchant whose cart has a broken wheel. He looks at you with weary eyes.",
@@ -372,7 +367,7 @@ export const generateSocialEncounter = async (player: Player): Promise<{ encount
 
 export const generateCharacterPortrait = async (description: string, characterClass: CharacterClass): Promise<{ portrait: string; isFallback?: boolean; }> => {
     try {
-        const response = await ai.models.generateContent({
+        const response = await getAi().models.generateContent({
             model: IMAGE_MODEL,
             contents: {
                 parts: [
@@ -398,15 +393,14 @@ export const generateCharacterPortrait = async (description: string, characterCl
 
     } catch (error) {
         console.error("Error generating character portrait:", error);
-        // In case of an error, we'll return an empty string. The UI can handle this.
         return { portrait: "", isFallback: true };
     }
 };
 
 export const generateWorldData = async (): Promise<WorldData | null> => {
     try {
-        // Step 1: Generate the world map image first.
-        const imageResponse = await ai.models.generateContent({
+        // Step 1: Generate the world map image.
+        const imageResponse = await getAi().models.generateContent({
             model: IMAGE_MODEL,
             contents: {
                 parts: [
@@ -436,7 +430,7 @@ export const generateWorldData = async (): Promise<WorldData | null> => {
         if (!image || !imageMimeType) throw new Error("No image data found in response for world map.");
 
         // Step 2: Analyze the generated image to create coherent world data.
-        const worldDataResponse = await ai.models.generateContent({
+        const worldDataResponse = await getAi().models.generateContent({
             model: TEXT_MODEL,
             contents: {
                 parts: [
@@ -461,7 +455,6 @@ export const generateWorldData = async (): Promise<WorldData | null> => {
 
         const worldJson = JSON.parse(worldDataResponse.text.trim());
         
-        // Validation for generated world data
         let startId = worldJson.startLocationId;
         const locations = worldJson.locations || [];
         const connections = worldJson.connections || [];
@@ -493,7 +486,7 @@ export const generateWorldData = async (): Promise<WorldData | null> => {
 
 export const generateSpeech = async (text: string): Promise<{ audio: string; isFallback: boolean; }> => {
     try {
-        const response = await ai.models.generateContent({
+        const response = await getAi().models.generateContent({
             model: TTS_MODEL,
             contents: [{ parts: [{ text: `Say with the tone of an epic fantasy narrator: ${text}` }] }],
             config: {

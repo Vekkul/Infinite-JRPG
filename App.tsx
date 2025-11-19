@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef, useReducer } from 'react';
 import { GameState, Player, Enemy, GameAction, Item, ItemType, SaveData, CharacterClass, EnemyAbility, SocialChoice, AIPersonality, PlayerAbility, Element, StatusEffectType, StatusEffect, WorldData } from './types';
-import { generateScene, generateEncounter, generateSocialEncounter, generateWorldData, generateExploreResult, generateSpeech, generateSceneAfterSocial } from './services/geminiService';
+import { generateScene, generateEncounter, generateSocialEncounter, generateWorldData, generateExploreResult, generateSceneAfterSocial } from './services/geminiService';
 import { Inventory } from './components/Inventory';
 import { reducer } from './state/reducer';
 import { initialState } from './state/initialState';
@@ -13,38 +13,9 @@ import { CombatView } from './components/views/CombatView';
 import { SocialEncounterView } from './components/views/SocialEncounterView';
 import { WorldMapView } from './components/views/WorldMapView';
 import { LogView } from './components/views/LogView';
-import { StatusBar } from './components/StatusBar';
 import { HeartIcon, StarIcon, SaveIcon, BoltIcon, FireIcon, MapIcon, BagIcon, SpeakerOnIcon, SpeakerOffIcon, BookIcon, ShieldIcon } from './components/icons';
 import { JRPG_SAVE_KEY, CRIT_CHANCE, CRIT_MULTIPLIER, FLEE_CHANCE, TRAVEL_ENCOUNTER_CHANCE, STATUS_EFFECT_CONFIG, ENEMY_STATUS_CHANCE, ENEMY_STATUS_MAP } from './constants';
-
-function decode(base64: string) {
-  const binaryString = atob(base64);
-  const len = binaryString.length;
-  const bytes = new Uint8Array(len);
-  for (let i = 0; i < len; i++) {
-    bytes[i] = binaryString.charCodeAt(i);
-  }
-  return bytes;
-}
-
-async function decodeAudioData(
-  data: Uint8Array,
-  ctx: AudioContext,
-  sampleRate: number,
-  numChannels: number,
-): Promise<AudioBuffer> {
-  const dataInt16 = new Int16Array(data.buffer);
-  const frameCount = dataInt16.length / numChannels;
-  const buffer = ctx.createBuffer(numChannels, frameCount, sampleRate);
-
-  for (let channel = 0; channel < numChannels; channel++) {
-    const channelData = buffer.getChannelData(channel);
-    for (let i = 0; i < frameCount; i++) {
-      channelData[i] = dataInt16[i * numChannels + channel] / 32768.0;
-    }
-  }
-  return buffer;
-}
+import { useAudio } from './hooks/useAudio';
 
 interface EventPopup {
   id: number;
@@ -86,7 +57,6 @@ const getSceneActions = (localActions: GameAction[], worldData: WorldData, playe
     return [...filteredLocalActions, ...moveActions];
 }
 
-
 const App: React.FC = () => {
     const [state, dispatch] = useReducer(reducer, initialState);
     const { gameState, player, enemies, storyText, actions, log, isPlayerTurn, socialEncounter, worldData, playerLocationId } = state;
@@ -96,17 +66,15 @@ const App: React.FC = () => {
     const [isLogOpen, setIsLogOpen] = useState(false);
     const [saveFileExists, setSaveFileExists] = useState(false);
     const [showLevelUp, setShowLevelUp] = useState(false);
-    const [isTtsEnabled, setIsTtsEnabled] = useState(false);
-    const [isSpeaking, setIsSpeaking] = useState(false);
     const [eventPopups, setEventPopups] = useState<EventPopup[]>([]);
 
     const enemyTurnInProgress = useRef(false);
     const prevLevelRef = useRef(player.level);
     const isInitialMount = useRef(true);
     const prevPlayerLocationId = useRef<string | null>(null);
-    const audioContextRef = useRef<AudioContext | null>(null);
-    const currentSpeechSourceRef = useRef<AudioBufferSourceNode | null>(null);
-    const spokenTextRef = useRef<string>('');
+
+    // Custom hook handles all audio/TTS logic
+    const { isTtsEnabled, isSpeaking, toggleTts } = useAudio(storyText, gameState);
 
     useEffect(() => {
         const savedData = localStorage.getItem(JRPG_SAVE_KEY);
@@ -129,90 +97,6 @@ const App: React.FC = () => {
             setEventPopups(prev => prev.filter(p => p.id !== newPopup.id));
         }, 2500);
     }, []);
-
-    const playSpeech = useCallback(async (text: string) => {
-        if (!text || !audioContextRef.current) return;
-
-        // Stop any previous speech
-        if (currentSpeechSourceRef.current) {
-            currentSpeechSourceRef.current.stop();
-            currentSpeechSourceRef.current = null;
-        }
-
-        setIsSpeaking(true);
-        spokenTextRef.current = text; // Set ref immediately to prevent re-triggering from useEffect
-
-        const { audio, isFallback } = await generateSpeech(text);
-        if (isFallback || !audio) {
-            console.error("Failed to generate or received empty audio.");
-            setIsSpeaking(false);
-            return;
-        }
-
-        try {
-            const audioBuffer = await decodeAudioData(
-                decode(audio),
-                audioContextRef.current,
-                24000,
-                1,
-            );
-            const source = audioContextRef.current.createBufferSource();
-            source.buffer = audioBuffer;
-            source.connect(audioContextRef.current.destination);
-            source.start();
-
-            currentSpeechSourceRef.current = source;
-            source.onended = () => {
-                if (currentSpeechSourceRef.current === source) {
-                    currentSpeechSourceRef.current = null;
-                }
-                setIsSpeaking(false);
-            };
-        } catch (error) {
-            console.error("Error playing audio:", error);
-            setIsSpeaking(false);
-        }
-    }, []);
-
-    const handleToggleTts = () => {
-        if (!audioContextRef.current) {
-            audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
-        }
-
-        const willBeEnabled = !isTtsEnabled;
-        setIsTtsEnabled(willBeEnabled);
-
-        if (willBeEnabled) {
-            spokenTextRef.current = '';
-        } else {
-            if (currentSpeechSourceRef.current) {
-                currentSpeechSourceRef.current.stop();
-                currentSpeechSourceRef.current = null;
-            }
-            setIsSpeaking(false);
-        }
-    };
-
-    useEffect(() => {
-        const canPlaySpeech = isTtsEnabled && storyText &&
-            gameState !== GameState.LOADING &&
-            gameState !== GameState.START_SCREEN &&
-            gameState !== GameState.CHARACTER_CREATION;
-
-        if (canPlaySpeech) {
-            if (storyText !== spokenTextRef.current) {
-                playSpeech(storyText);
-            }
-        } else {
-            if (currentSpeechSourceRef.current) {
-                currentSpeechSourceRef.current.stop();
-                currentSpeechSourceRef.current = null;
-            }
-            if (isSpeaking) {
-                setIsSpeaking(false);
-            }
-        }
-    }, [storyText, isTtsEnabled, gameState, playSpeech, isSpeaking]);
     
     const appendToLog = useCallback((message: string) => {
         dispatch({ type: 'ADD_LOG', payload: message });
@@ -842,7 +726,7 @@ const App: React.FC = () => {
                            {renderGameContent()}
                            {!isScreenState && (
                                 <button
-                                    onClick={handleToggleTts}
+                                    onClick={toggleTts}
                                     className={`absolute top-3 right-3 text-gray-400 hover:text-white transition-colors z-10 ${isSpeaking ? 'animate-pulse' : ''}`}
                                     aria-label={isTtsEnabled ? 'Disable text-to-speech' : 'Enable text-to-speech'}
                                 >
