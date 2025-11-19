@@ -24,11 +24,11 @@ interface EventPopup {
 }
 
 const statusEffectIcons: Record<StatusEffectType, React.ReactNode> = {
-    [StatusEffectType.BURN]: <FireIcon className="w-5 h-5 text-orange-400" />,
-    [StatusEffectType.CHILL]: <span className="text-cyan-400 text-xl">❄️</span>,
-    [StatusEffectType.SHOCK]: <BoltIcon className="w-5 h-5 text-yellow-400" />,
-    [StatusEffectType.GROUNDED]: <span className="text-amber-700 text-xl">⛰️</span>,
-    [StatusEffectType.EARTH_ARMOR]: <ShieldIcon className="w-5 h-5 text-green-500" />,
+    [StatusEffectType.BURN]: <FireIcon className="w-4 h-4 text-orange-400" />,
+    [StatusEffectType.CHILL]: <span className="text-cyan-400 text-xs">❄️</span>,
+    [StatusEffectType.SHOCK]: <BoltIcon className="w-4 h-4 text-yellow-400" />,
+    [StatusEffectType.GROUNDED]: <span className="text-amber-700 text-xs">⛰️</span>,
+    [StatusEffectType.EARTH_ARMOR]: <ShieldIcon className="w-4 h-4 text-green-500" />,
 };
 
 // Helper function to build and sanitize scene actions
@@ -399,31 +399,77 @@ const App: React.FC = () => {
         enemyTurnInProgress.current = true;
         let currentHp = player.hp;
 
-        const determineEnemyAction = (enemy: Enemy): 'attack' | EnemyAbility | null => {
+        const determineEnemyAction = (enemy: Enemy): 'attack' | EnemyAbility => {
             if (!enemy.ability) return 'attack';
+            
             const hpPercent = enemy.hp / enemy.maxHp;
+            const isPlayerDefending = player.isDefending;
+            const isPlayerLow = (currentHp / player.maxHp) < 0.3;
+
+            const canHeal = enemy.ability === EnemyAbility.HEAL;
+            const canShield = enemy.ability === EnemyAbility.SHIELD && !enemy.isShielded;
+            const canDrain = enemy.ability === EnemyAbility.DRAIN_LIFE;
+            const canMulti = enemy.ability === EnemyAbility.MULTI_ATTACK;
+
             switch (enemy.aiPersonality) {
+                case AIPersonality.AGGRESSIVE:
+                    // Aggressive: Push for the kill, especially if player is low.
+                    if (isPlayerLow && (canMulti || canDrain)) return enemy.ability;
+                    
+                    // Rarely heal/shield, only if critical
+                    if (hpPercent < 0.25 && canHeal && Math.random() < 0.8) return EnemyAbility.HEAL;
+                    if (hpPercent < 0.25 && canShield && Math.random() < 0.8) return EnemyAbility.SHIELD;
+
+                    // Use offensive abilities often
+                    if (canMulti && Math.random() < 0.6) return EnemyAbility.MULTI_ATTACK;
+                    if (canDrain && Math.random() < 0.5) return EnemyAbility.DRAIN_LIFE;
+                    
+                    return 'attack';
+
                 case AIPersonality.DEFENSIVE:
-                    if (hpPercent < 0.5 && (enemy.ability === EnemyAbility.HEAL || enemy.ability === EnemyAbility.SHIELD)) {
-                        if (enemy.ability === EnemyAbility.SHIELD && enemy.isShielded) return 'attack';
-                        return enemy.ability;
-                    }
+                    // Defensive: prioritize health and shielding.
+                    if (hpPercent < 0.6 && canHeal && Math.random() < 0.9) return EnemyAbility.HEAL;
+                    if (hpPercent < 0.75 && canShield && Math.random() < 0.8) return EnemyAbility.SHIELD;
+                    
+                    // Only attack if safe-ish, or use drain to sustain
+                    if (canDrain && hpPercent < 0.8) return EnemyAbility.DRAIN_LIFE;
+
                     return 'attack';
+
                 case AIPersonality.STRATEGIC:
-                    if (hpPercent < 0.3 && enemy.ability === EnemyAbility.HEAL) return EnemyAbility.HEAL;
-                    if (hpPercent < 0.7 && !enemy.isShielded && enemy.ability === EnemyAbility.SHIELD && Math.random() < 0.8) return EnemyAbility.SHIELD;
-                    if ((enemy.ability === EnemyAbility.DRAIN_LIFE || enemy.ability === EnemyAbility.MULTI_ATTACK) && Math.random() < 0.4) return enemy.ability;
-                    return 'attack';
-                case AIPersonality.WILD:
-                    if (enemy.ability === EnemyAbility.SHIELD && enemy.isShielded) return 'attack';
-                    if (Math.random() < 0.5) return enemy.ability;
-                    return 'attack';
-                case AIPersonality.AGGRESSIVE: default:
-                    if ((enemy.ability === EnemyAbility.DRAIN_LIFE || enemy.ability === EnemyAbility.MULTI_ATTACK) && Math.random() < 0.3) return enemy.ability;
-                    if ((enemy.ability === EnemyAbility.HEAL || enemy.ability === EnemyAbility.SHIELD) && Math.random() < 0.15) {
-                        if (enemy.ability === EnemyAbility.SHIELD && enemy.isShielded) return 'attack';
-                        return enemy.ability;
+                    // Strategic: Respond to player state.
+                    
+                    // If player is defending, don't waste big attacks. Buff self or heal.
+                    if (isPlayerDefending) {
+                         if (canHeal && hpPercent < 0.9) return EnemyAbility.HEAL;
+                         if (canShield) return EnemyAbility.SHIELD;
                     }
+
+                    // If player is vulnerable (low hp), execute
+                    if (isPlayerLow && (canMulti || canDrain)) return enemy.ability;
+
+                    // Smart healing threshold
+                    if (hpPercent < 0.4 && canHeal) return EnemyAbility.HEAL;
+                    
+                    // Shield if somewhat low but not critical
+                    if (hpPercent < 0.6 && canShield) return EnemyAbility.SHIELD;
+
+                    // Use drain efficiently (when not full HP)
+                    if (canDrain && hpPercent < 0.85) return EnemyAbility.DRAIN_LIFE;
+
+                    // Use multi attack for damage output
+                    if (canMulti && Math.random() < 0.5) return EnemyAbility.MULTI_ATTACK;
+
+                    return 'attack';
+
+                case AIPersonality.WILD:
+                    // Wild: High variance.
+                    if (canShield && Math.random() < 0.35) return EnemyAbility.SHIELD;
+                    if (canHeal && hpPercent < 0.8 && Math.random() < 0.4) return EnemyAbility.HEAL;
+                    if ((canMulti || canDrain) && Math.random() < 0.5) return enemy.ability;
+                    return 'attack';
+
+                default:
                     return 'attack';
             }
         };
@@ -448,11 +494,11 @@ const App: React.FC = () => {
                 
                 const actionToTake = determineEnemyAction(enemy);
 
-                if (actionToTake !== 'attack' && actionToTake !== null) {
-                        appendToLog(`${enemy.name} uses ${actionToTake}!`);
+                if (actionToTake !== 'attack') {
+                    appendToLog(`${enemy.name} uses ${actionToTake}!`);
                     switch (actionToTake) {
                         case EnemyAbility.HEAL:
-                            const healAmount = Math.floor(enemy.maxHp * 0.25);
+                            const healAmount = Math.floor(enemy.maxHp * 0.35); // Buffed heal slightly
                             dispatch({ type: 'ENEMY_ACTION_HEAL', payload: { enemyIndex: i, healAmount } });
                             createEventPopup(`${enemy.name} heals!`, 'heal');
                             appendToLog(`${enemy.name} recovers ${healAmount} HP.`);
@@ -652,68 +698,51 @@ const App: React.FC = () => {
                     {/* Player Status */}
                     {!isScreenState && (
                         <div className="md:col-span-1 flex flex-col order-1 shrink-0">
-                            <div className="bg-gray-800/70 p-2 md:p-3 rounded-lg border-2 border-blue-500 shadow-lg">
-                                <div className="flex items-center gap-3">
-                                    {player.portrait && (
-                                        <div className="w-20 h-20 md:w-24 md:h-24 bg-black rounded-md border-2 border-gray-600 flex-shrink-0">
-                                            <img src={`data:image/png;base64,${player.portrait}`} alt="Player Portrait" className="w-full h-full object-cover rounded-sm" />
+                            <div className="bg-gray-800/80 rounded-lg border-2 border-blue-500/50 shadow-xl overflow-hidden flex items-stretch h-32 md:h-auto">
+                                {player.portrait && (
+                                    <div className="w-28 md:w-32 bg-black border-r-2 border-blue-900/30 relative shrink-0">
+                                        <img src={`data:image/png;base64,${player.portrait}`} alt="Player Portrait" className="absolute inset-0 w-full h-full object-cover" />
+                                    </div>
+                                )}
+                                <div className="flex flex-col flex-grow p-2 md:p-3 justify-between min-w-0">
+                                    <div className="flex justify-between items-start">
+                                        <div className="flex-grow min-w-0 mr-2">
+                                            <h2 className="text-base md:text-lg font-press-start text-blue-300 truncate leading-tight">{player.name}</h2>
+                                            <p className="text-xs text-gray-400">{player.class}</p>
                                         </div>
-                                    )}
-                                    <div className="flex flex-col flex-grow w-full gap-2">
-                                        <div className="flex justify-between items-start">
-                                            <div className="flex-grow min-w-0">
-                                                <h2 className="text-lg md:text-xl font-press-start text-blue-300 overflow-hidden text-ellipsis whitespace-nowrap" title={player.name}>{player.name}</h2>
-                                                <p className="text-base text-gray-300">{player.class}</p>
-                                            </div>
-                                            <div className="text-base text-right flex-shrink-0">
-                                                <div>Lvl: <span className="font-bold text-white">{player.level}</span></div>
-                                                <div>Atk: <span className="font-bold text-white">{player.attack}</span></div>
-                                            </div>
+                                        <div className="text-right shrink-0 flex flex-col items-end">
+                                             <div className="text-xs text-gray-500 font-bold">LVL {player.level}</div>
+                                             <div className="text-xs text-gray-400">ATK <span className="text-white font-bold">{player.attack}</span></div>
                                         </div>
-                                        <div className="space-y-1">
-                                            <div className="flex items-center gap-2 text-sm font-bold">
-                                                <span className="text-red-400 w-5 text-xs">HP</span>
-                                                <div className="w-full bg-black/50 rounded-full h-4 border border-gray-600 relative overflow-hidden">
-                                                    <div className="bg-red-500 h-full rounded-full transition-all duration-500 ease-in-out" style={{ width: `${(player.hp / player.maxHp) * 100}%` }}></div>
-                                                    <span className="absolute inset-0 text-center text-white text-xs leading-4" style={{textShadow: '1px 1px 1px #000'}}>{player.hp}/{player.maxHp}</span>
-                                                </div>
-                                            </div>
-                                            {player.class === CharacterClass.MAGE && player.mp !== undefined && player.maxMp !== undefined && (
-                                                <div className="flex items-center gap-2 text-sm font-bold">
-                                                    <span className="text-blue-400 w-5 text-xs">MP</span>
-                                                    <div className="w-full bg-black/50 rounded-full h-4 border border-gray-600 relative overflow-hidden">
-                                                        <div className="bg-blue-500 h-full rounded-full transition-all duration-500 ease-in-out" style={{ width: `${(player.mp / player.maxMp) * 100}%` }}></div>
-                                                        <span className="absolute inset-0 text-center text-white text-xs leading-4" style={{textShadow: '1px 1px 1px #000'}}>{player.mp}/{player.maxMp}</span>
-                                                    </div>
-                                                </div>
-                                            )}
-                                            {player.class === CharacterClass.ROGUE && player.ep !== undefined && player.maxEp !== undefined && (
-                                                <div className="flex items-center gap-2 text-sm font-bold">
-                                                    <span className="text-green-400 w-5 text-xs">EP</span>
-                                                    <div className="w-full bg-black/50 rounded-full h-4 border border-gray-600 relative overflow-hidden">
-                                                        <div className="bg-green-500 h-full rounded-full transition-all duration-500 ease-in-out" style={{ width: `${(player.ep / player.maxEp) * 100}%` }}></div>
-                                                        <span className="absolute inset-0 text-center text-white text-xs leading-4" style={{textShadow: '1px 1px 1px #000'}}>{player.ep}/{player.maxEp}</span>
-                                                    </div>
-                                                </div>
-                                            )}
-                                            <div className="flex items-center gap-2 text-sm font-bold">
-                                                <span className="text-yellow-400 w-5 text-xs">XP</span>
-                                                <div className="w-full bg-black/50 rounded-full h-4 border border-gray-600 relative overflow-hidden">
-                                                    <div className="bg-yellow-400 h-full rounded-full transition-all duration-500 ease-in-out" style={{ width: `${(player.xp / player.xpToNextLevel) * 100}%` }}></div>
-                                                    <span className="absolute inset-0 text-center text-white text-xs leading-4" style={{textShadow: '1px 1px 1px #000'}}>{player.xp}/{player.xpToNextLevel}</span>
+                                    </div>
+                                    
+                                    <div className="space-y-1.5 my-1">
+                                        <div className="w-full h-4 bg-gray-900 rounded-full border border-gray-700 relative overflow-hidden">
+                                             <div className="bg-red-600 h-full transition-all duration-500" style={{ width: `${(player.hp / player.maxHp) * 100}%` }}></div>
+                                             <div className="absolute inset-0 flex items-center justify-center text-[10px] font-bold text-white shadow-black drop-shadow-md">HP {player.hp}/{player.maxHp}</div>
+                                        </div>
+                                        {(player.class === CharacterClass.MAGE || player.class === CharacterClass.ROGUE) && (
+                                             <div className="w-full h-4 bg-gray-900 rounded-full border border-gray-700 relative overflow-hidden">
+                                                <div className={`${player.class === CharacterClass.MAGE ? 'bg-blue-600' : 'bg-green-600'} h-full transition-all duration-500`} style={{ width: `${((player.mp || player.ep || 0) / (player.maxMp || player.maxEp || 1)) * 100}%` }}></div>
+                                                <div className="absolute inset-0 flex items-center justify-center text-[10px] font-bold text-white shadow-black drop-shadow-md">
+                                                    {player.class === CharacterClass.MAGE ? 'MP' : 'EP'} {player.mp || player.ep}/{player.maxMp || player.maxEp}
                                                 </div>
                                             </div>
-                                        </div>
-                                         <div className="flex justify-start items-center gap-2 mt-2 h-6">
-                                            {player.statusEffects.map(effect => (
-                                                <div key={effect.type} className="relative group bg-black/50 p-1 rounded-full">
-                                                    {statusEffectIcons[effect.type]}
-                                                    <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 w-max bg-black/80 text-white text-xs rounded py-1 px-2 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10">
-                                                        {STATUS_EFFECT_CONFIG[effect.type].name} ({effect.duration} turns)
-                                                    </div>
+                                        )}
+                                         <div className="w-full h-2 bg-gray-900 rounded-full relative overflow-hidden">
+                                             <div className="bg-yellow-500 h-full transition-all duration-500" style={{ width: `${(player.xp / player.xpToNextLevel) * 100}%` }}></div>
+                                         </div>
+                                    </div>
+
+                                     <div className="flex justify-start items-center gap-1 h-5">
+                                        {player.statusEffects.map(effect => (
+                                            <div key={effect.type} className="relative group bg-black/40 p-0.5 rounded">
+                                                {statusEffectIcons[effect.type]}
+                                                <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 w-max bg-black/80 text-white text-xs rounded py-1 px-2 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10">
+                                                    {STATUS_EFFECT_CONFIG[effect.type].name} ({effect.duration} turns)
                                                 </div>
-                                            ))}
-                                        </div>
+                                            </div>
+                                        ))}
                                     </div>
                                 </div>
                             </div>
