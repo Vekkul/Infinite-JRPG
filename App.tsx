@@ -151,7 +151,8 @@ const App: React.FC = () => {
         localStorage.setItem(JRPG_SAVE_KEY, JSON.stringify(saveData));
         setSaveFileExists(true);
         appendToLog('Game Saved!');
-    }, [player, storyText, actions, log, worldData, playerLocationId, appendToLog]);
+        createEventPopup('Game Saved!', 'info');
+    }, [player, storyText, actions, log, worldData, playerLocationId, appendToLog, createEventPopup]);
 
     const loadGame = useCallback(() => {
         const savedDataString = localStorage.getItem(JRPG_SAVE_KEY);
@@ -630,7 +631,7 @@ const App: React.FC = () => {
     };
 
     return (
-        <main className="h-screen w-screen bg-gray-900 text-gray-200 p-2" style={{
+        <main className="h-screen w-screen bg-gray-900 text-gray-200 p-1 sm:p-2" style={{
             backgroundImage: `radial-gradient(circle, rgba(31, 41, 55, 0.9) 0%, rgba(17, 24, 39, 1) 70%)`,
         }}>
             <Inventory 
