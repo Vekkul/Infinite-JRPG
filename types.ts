@@ -106,6 +106,8 @@ export interface Player {
   maxMp?: number;
   ep?: number; 
   maxEp?: number;
+  sp?: number; // Stamina Points (Warrior)
+  maxSp?: number;
   attack: number;
   defense: number; 
   level: number;
@@ -241,7 +243,7 @@ export type Action =
   | { type: 'UPDATE_PLAYER'; payload: Partial<Player> }
   | { type: 'ADD_LOG'; payload: string }
   | { type: 'ADD_ITEM_TO_INVENTORY'; payload: Omit<Item, 'quantity'> }
-  | { type: 'PROCESS_COMBAT_VICTORY'; payload: { xpGained: number; loot: Omit<Item, 'quantity'>[]; regen: {hp: number; mp: number; ep: number; } } }
+  | { type: 'PROCESS_COMBAT_VICTORY'; payload: { xpGained: number; loot: Omit<Item, 'quantity'>[]; regen: {hp: number; mp: number; ep: number; sp: number; } } }
   | { type: 'USE_ITEM'; payload: { inventoryIndex: number } }
   | { type: 'EQUIP_ITEM'; payload: { inventoryIndex: number } }
   | { type: 'UNEQUIP_ITEM'; payload: { slot: EquipmentSlot } }

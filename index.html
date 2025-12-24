@@ -5,6 +5,8 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <meta name="theme-color" content="#111827" />
+    <meta name="description" content="Infinite JRPG - A procedurally generated adventure powered by AI." />
     <title>Infinite JRPG</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -17,7 +19,8 @@
         touch-action: manipulation;
         background-color: #111827;
         color: white;
-        overflow: hidden; /* Prevent body scroll, handle in app container */
+        overflow-x: hidden;
+        overflow-y: auto; /* Allow body scroll if content exceeds viewport */
       }
       .font-press-start {
         font-family: 'Press Start 2P', cursive;
@@ -136,6 +139,59 @@
           15% { opacity: 1; transform: translateY(0) scale(1.1); }
           85% { opacity: 1; transform: translateY(-40px) scale(1); }
           100% { opacity: 0; transform: translateY(-60px) scale(0.9); }
+      }
+
+      /* CRT Effect */
+      .crt-effect {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        pointer-events: none;
+        background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.25) 50%), linear-gradient(90deg, rgba(255, 0, 0, 0.06), rgba(0, 255, 0, 0.02), rgba(0, 0, 255, 0.06));
+        background-size: 100% 2px, 3px 100%;
+        z-index: 9999;
+        box-shadow: inset 0 0 50px rgba(0,0,0,0.5);
+      }
+      
+      .crt-effect::after {
+        content: " ";
+        display: block;
+        position: absolute;
+        top: 0;
+        left: 0;
+        bottom: 0;
+        right: 0;
+        background: rgba(18, 16, 16, 0.1);
+        opacity: 0;
+        z-index: 2;
+        pointer-events: none;
+        animation: flicker 0.15s infinite;
+      }
+      
+      @keyframes flicker {
+        0% { opacity: 0.02795 }
+        5% { opacity: 0.04574 }
+        10% { opacity: 0.03816 }
+        15% { opacity: 0.01639 }
+        20% { opacity: 0.0407 }
+        25% { opacity: 0.0423 }
+        30% { opacity: 0.03468 }
+        35% { opacity: 0.05779 }
+        40% { opacity: 0.04942 }
+        45% { opacity: 0.02036 }
+        50% { opacity: 0.04928 }
+        55% { opacity: 0.02107 }
+        60% { opacity: 0.04705 }
+        65% { opacity: 0.02235 }
+        70% { opacity: 0.04419 }
+        75% { opacity: 0.02534 }
+        80% { opacity: 0.04754 }
+        85% { opacity: 0.01918 }
+        90% { opacity: 0.03352 }
+        95% { opacity: 0.0296 }
+        100% { opacity: 0.04781 }
       }
 
       /* Safe area spacing for modern phones */

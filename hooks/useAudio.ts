@@ -35,7 +35,7 @@ async function decodeAudioData(
 // Singleton for AudioContext to avoid "Too many AudioContexts" warning
 let globalAudioContext: AudioContext | null = null;
 const getAudioContext = () => {
-    if (!globalAudioContext) {
+    if (!globalAudioContext || globalAudioContext.state === 'closed') {
         globalAudioContext = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
     }
     return globalAudioContext;
@@ -73,9 +73,13 @@ export const useAudio = (storyText: string, gameState: GameState) => {
         }
 
         try {
-            // Check if context is suspended (browser policy)
-             if (ctx.state === 'suspended') {
-                await ctx.resume();
+            // Robust check if context is suspended (browser policy)
+            if (ctx.state === 'suspended') {
+                try {
+                    await ctx.resume();
+                } catch (e) {
+                    console.warn("Could not resume audio context (autoplay blocked?)", e);
+                }
             }
             
             const audioBuffer = await decodeAudioData(
@@ -102,12 +106,18 @@ export const useAudio = (storyText: string, gameState: GameState) => {
         }
     }, []);
 
-    const toggleTts = useCallback(() => {
+    const toggleTts = useCallback(async () => {
+        // Initialize context on user interaction
+        const ctx = getAudioContext();
+        if (ctx.state === 'suspended') {
+            try {
+                await ctx.resume();
+            } catch (e) { console.error(e); }
+        }
+
         setIsTtsEnabled(prev => {
             const willBeEnabled = !prev;
             if (willBeEnabled) {
-                // Initialize context on user interaction if needed
-                getAudioContext();
                 spokenTextRef.current = ''; // Reset to trigger current text
             } else {
                 if (currentSpeechSourceRef.current) {

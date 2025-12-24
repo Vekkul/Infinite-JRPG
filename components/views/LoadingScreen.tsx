@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from 'react';
 
 const loadingMessages = [
@@ -25,7 +26,7 @@ export const LoadingScreen: React.FC = () => {
     }, []);
 
     return (
-        <div className="text-center flex flex-col items-center justify-center h-full">
+        <div className="text-center flex flex-col items-center justify-center flex-grow">
             <div className="animate-spin rounded-full h-32 w-32 border-t-4 border-b-4 border-yellow-400"></div>
             <p className="mt-4 text-2xl transition-opacity duration-500">{message}</p>
         </div>

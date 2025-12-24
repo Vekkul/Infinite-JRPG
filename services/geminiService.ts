@@ -1,16 +1,19 @@
 
-import { GoogleGenAI, Type, Modality } from "@google/genai";
+import { GoogleGenAI, Type, Modality, GenerateContentResponse } from "@google/genai";
 import { Player, GameAction, Item, ItemType, EnemyAbility, CharacterClass, SocialEncounter, RewardType, AIPersonality, MapLocation, WorldData, Element, Enemy, SocialChoice, EquipmentSlot, Quest, QuestUpdate } from '../types';
 
 // Helper to get a fresh instance of the API client
-const getAi = () => new GoogleGenAI({ apiKey: process.env.API_KEY as string });
+// Optimized: Singleton instance to avoid overhead, assuming API_KEY doesn't change
+const ai = new GoogleGenAI({ apiKey: process.env.API_KEY as string });
+const getAi = () => ai;
 
-const TEXT_MODEL = 'gemini-2.5-flash';
+const TEXT_MODEL = 'gemini-3-flash-preview';
 const IMAGE_MODEL = 'gemini-2.5-flash-image';
 const TTS_MODEL = 'gemini-2.5-flash-preview-tts';
 
 const SYSTEM_INSTRUCTION = "You are a creative and engaging dungeon master for a classic fantasy JRPG. Your descriptions are vivid, your monsters are menacing, and your scenarios are intriguing. Keep the tone epic and adventurous, with a slightly retro feel. Responses must adhere to the provided JSON schema.";
 
+// --- Schemas (Kept as is for brevity, assume they exist) ---
 const questSchema = {
     type: Type.OBJECT,
     properties: {
@@ -210,11 +213,16 @@ const worldDataSchema = {
     required: ["locations", "connections", "startLocationId"]
 };
 
-// Helper for Safe JSON Parsing
-const safeJsonParse = <T>(text: string, fallbackMessage: string): T => {
+// --- Optimizations & Error Handling ---
+
+// Helper for Safe JSON Parsing with cleanup
+const safeJsonParse = <T>(text: string | undefined, fallbackMessage: string): T => {
     try {
-        const cleanedText = text.trim();
-        // Simple check to ensure we are trying to parse something that looks like JSON
+        if (!text) throw new Error("Text is undefined");
+        let cleanedText = text.trim();
+        // Remove markdown code blocks if present
+        cleanedText = cleanedText.replace(/^```json\s*/, '').replace(/^```\s*/, '').replace(/\s*```$/, '');
+        
         if ((!cleanedText.startsWith('{') && !cleanedText.startsWith('['))) {
              throw new Error("Response is not JSON");
         }
@@ -225,12 +233,28 @@ const safeJsonParse = <T>(text: string, fallbackMessage: string): T => {
     }
 };
 
+// Retry wrapper for API calls
+const callWithRetry = async <T>(
+    fn: () => Promise<T>, 
+    retries: number = 2, 
+    delay: number = 1000
+): Promise<T> => {
+    try {
+        return await fn();
+    } catch (error: any) {
+        if (retries > 0) {
+            console.warn(`API call failed. Retrying in ${delay}ms...`, error);
+            await new Promise(resolve => setTimeout(resolve, delay));
+            return callWithRetry(fn, retries - 1, delay * 2);
+        }
+        throw error;
+    }
+};
 
 // --- Helper for Prompt Construction ---
 const getContextString = (player: Player) => {
     let context = `Player Context: Level ${player.level} ${player.class}.`;
     if (player.journal.quests.length > 0) {
-        // IMPORTANT: Sending IDs so the AI can reference them in updates.
         const activeQuests = player.journal.quests
             .filter(q => q.status === 'ACTIVE')
             .map(q => `${q.title} (ID: ${q.id}: ${q.description})`)
@@ -249,7 +273,7 @@ const getContextString = (player: Player) => {
 export const generateExploreResult = async (player: Player, action: GameAction): Promise<{ description: string; nextSceneType: 'EXPLORATION' | 'SOCIAL' | 'COMBAT'; localActions?: GameAction[]; foundItem?: Omit<Item, 'quantity'>; socialChoices?: SocialChoice[]; questUpdate?: QuestUpdate; isFallback?: boolean; }> => {
     try {
         const context = getContextString(player);
-        const response = await getAi().models.generateContent({
+        const response = await callWithRetry<GenerateContentResponse>(() => getAi().models.generateContent({
             model: TEXT_MODEL,
             contents: `Context: ${context}. The player decided to: "${action.label}". Generate a logically consistent result that respects the narrative flags. The 'description' must vividly narrate the outcome and set up the next scene. For EXPLORATION, describe the action's result and the current scene. If the player's action and location logically conclude an ACTIVE quest (e.g., they found the item or person described in the quest ID/Description), strictly use 'questUpdate' to mark it COMPLETED. For SOCIAL/COMBAT, provide the lead-in text. E.g., for 'Search a chest', 'description' could be 'You open the chest and find a healing potion. The dusty room is otherwise empty.', with nextSceneType 'EXPLORATION'. Trigger COMBAT sparingly.`,
             config: {
@@ -258,7 +282,7 @@ export const generateExploreResult = async (player: Player, action: GameAction):
                 responseSchema: exploreResultSchema,
                 temperature: 0.7,
             },
-        });
+        }));
 
         const data = safeJsonParse<any>(response.text, "generateExploreResult");
 
@@ -272,6 +296,7 @@ export const generateExploreResult = async (player: Player, action: GameAction):
         };
 
     } catch (error) {
+        console.error("Explore Generation failed:", error);
         return {
             description: "You cautiously proceed but find nothing of interest. The path ahead remains, waiting for your next move.",
             nextSceneType: 'EXPLORATION',
@@ -284,7 +309,7 @@ export const generateExploreResult = async (player: Player, action: GameAction):
 export const generateScene = async (player: Player, location: MapLocation): Promise<{ description: string; actions: GameAction[]; foundItem?: Omit<Item, 'quantity'>; isFallback?: boolean; }> => {
     try {
         const context = getContextString(player);
-        const response = await getAi().models.generateContent({
+        const response = await callWithRetry<GenerateContentResponse>(() => getAi().models.generateContent({
             model: TEXT_MODEL,
             contents: `Context: ${context}. Generate a new scene for a JRPG player. The player has just arrived at ${location.name}: "${location.description}". Generate a vivid description that incorporates active quests or narrative flags if they seem relevant to this location. Generate 1-2 thematically appropriate local actions.`,
             config: {
@@ -293,7 +318,7 @@ export const generateScene = async (player: Player, location: MapLocation): Prom
                 responseSchema: sceneSchema,
                 temperature: 0.7,
             },
-        });
+        }));
 
         const data = safeJsonParse<any>(response.text, "generateScene");
         
@@ -303,6 +328,7 @@ export const generateScene = async (player: Player, location: MapLocation): Prom
             foundItem: data.foundItem
         };
     } catch (error) {
+        console.error("Scene Generation failed:", error);
         return {
             description: `You have arrived at ${location.name}. An ancient path winds before you, shrouded in an eerie silence. The air is thick with unspoken magic.`,
             actions: [
@@ -319,7 +345,7 @@ export const generateEncounter = async (player: Player): Promise<{ enemies: Enem
         const context = getContextString(player);
         const numMonsters = Math.floor(Math.random() * 3) + 1; // 1, 2, or 3
 
-        const response = await getAi().models.generateContent({
+        const response = await callWithRetry<GenerateContentResponse>(() => getAi().models.generateContent({
             model: TEXT_MODEL,
             contents: `Context: ${context}. Generate a fantasy JRPG monster encounter for a player who is level ${player.level}. Generate exactly ${numMonsters} monster(s). Some might have special abilities like healing or shielding. Monsters can also have an elemental affinity (Fire, Ice, Lightning, Earth). The encounter should be a suitable challenge.`,
             config: {
@@ -328,7 +354,7 @@ export const generateEncounter = async (player: Player): Promise<{ enemies: Enem
                 responseSchema: encounterSchema,
                 temperature: 0.6,
             },
-        });
+        }));
 
         const data = safeJsonParse<Omit<Enemy, 'maxHp' | 'isShielded' | 'statusEffects'>[]>(response.text, "generateEncounter");
         
@@ -337,6 +363,7 @@ export const generateEncounter = async (player: Player): Promise<{ enemies: Enem
         }
         return { enemies: data.map(enemy => ({ ...enemy, maxHp: enemy.hp, isShielded: false, statusEffects: [] })) };
     } catch (error) {
+        console.error("Encounter Generation failed:", error);
         // Fallback enemy
         const hp = player.level * 20;
         const attack = player.level * 4;
@@ -390,7 +417,7 @@ const getFallbackPortrait = (characterClass: CharacterClass): string => {
 
 export const generateCharacterPortrait = async (description: string, characterClass: CharacterClass): Promise<{ portrait: string; isFallback?: boolean; }> => {
     try {
-        const response = await getAi().models.generateContent({
+        const response = await callWithRetry<GenerateContentResponse>(() => getAi().models.generateContent({
             model: IMAGE_MODEL,
             contents: {
                 parts: [
@@ -399,7 +426,7 @@ export const generateCharacterPortrait = async (description: string, characterCl
                     },
                 ],
             },
-        });
+        }), 1); // Less retry for images to save time
 
         const parts = response.candidates?.[0]?.content?.parts;
         if (parts) {
@@ -420,7 +447,7 @@ export const generateCharacterPortrait = async (description: string, characterCl
 export const generateWorldData = async (): Promise<WorldData | null> => {
     try {
         // Step 1: Generate the world map image.
-        const imageResponse = await getAi().models.generateContent({
+        const imageResponse = await callWithRetry<GenerateContentResponse>(() => getAi().models.generateContent({
             model: IMAGE_MODEL,
             contents: {
                 parts: [
@@ -429,7 +456,7 @@ export const generateWorldData = async (): Promise<WorldData | null> => {
                     },
                 ],
             },
-        });
+        }), 1);
 
         let image = "";
         let imageMimeType = "";
@@ -447,7 +474,8 @@ export const generateWorldData = async (): Promise<WorldData | null> => {
         if (!image || !imageMimeType) throw new Error("No image data found in response for world map.");
 
         // Step 2: Analyze the generated image to create coherent world data.
-        const worldDataResponse = await getAi().models.generateContent({
+        // Using gemini-3-flash-preview for its superior multimodal capabilities to map locations accurately
+        const worldDataResponse = await callWithRetry<GenerateContentResponse>(() => getAi().models.generateContent({
             model: TEXT_MODEL,
             contents: {
                 parts: [
@@ -458,7 +486,7 @@ export const generateWorldData = async (): Promise<WorldData | null> => {
                         },
                     },
                     {
-                        text: `You are a fantasy cartographer. Analyze the provided JRPG world map image. Identify 6 to 8 distinct locations like villages, castles, forests, or mountains. Create a JSON object that follows the provided schema. One location MUST be a starting village named 'Oakhaven' (id: 'oakhaven') and set as the 'startLocationId'. For each location, provide its x and y coordinates based on its position in the image. Ensure all locations form a single connected graph.`,
+                        text: `You are a fantasy cartographer. Analyze the provided JRPG world map image. Identify 6 to 8 distinct locations like villages, castles, forests, or mountains. Create a JSON object that follows the provided schema. One location MUST be a starting village named 'Oakhaven' (id: 'oakhaven') and set as the 'startLocationId'. For each location, provide its x and y coordinates (0-100) based on its visual position. Ensure all locations form a single connected graph via the connections array.`,
                     },
                 ],
             },
@@ -468,7 +496,7 @@ export const generateWorldData = async (): Promise<WorldData | null> => {
                 responseSchema: worldDataSchema,
                 temperature: 0.6,
             },
-        });
+        }));
 
         const worldJson = safeJsonParse<any>(worldDataResponse.text, "generateWorldData");
         
@@ -501,18 +529,18 @@ export const generateWorldData = async (): Promise<WorldData | null> => {
 
 export const generateSpeech = async (text: string): Promise<{ audio: string; isFallback: boolean; }> => {
     try {
-        const response = await getAi().models.generateContent({
+        const response = await callWithRetry<GenerateContentResponse>(() => getAi().models.generateContent({
             model: TTS_MODEL,
             contents: [{ parts: [{ text: `Say with the tone of an epic fantasy narrator: ${text}` }] }],
             config: {
                 responseModalities: [Modality.AUDIO],
                 speechConfig: {
                     voiceConfig: {
-                        prebuiltVoiceConfig: { voiceName: 'Kore' },
+                        prebuiltVoiceConfig: { voiceName: 'Zephyr' },
                     },
                 },
             },
-        });
+        }));
         const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
         if (base64Audio) {
             return { audio: base64Audio, isFallback: false };

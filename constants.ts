@@ -10,7 +10,7 @@ export const INITIAL_PLAYER_STATS: Player = {
   hp: 50,
   maxHp: 50,
   attack: 10,
-  defense: 0,
+  defense: 1, // Standardized baseline
   level: 1,
   xp: 0,
   xpToNextLevel: 100,
@@ -29,31 +29,33 @@ export const CLASS_STATS: Record<CharacterClass, Partial<Player>> = {
     [CharacterClass.WARRIOR]: {
         maxHp: 70,
         hp: 70,
-        attack: 12,
-        defense: 2,
+        attack: 10, // Slightly reduced to account for high sustain/defense
+        defense: 2, // Tankiest
+        maxSp: 20, // Stamina
+        sp: 20,
     },
     [CharacterClass.MAGE]: {
         maxHp: 45,
         hp: 45,
-        attack: 8,
+        attack: 6, // Low physical attack, relies on spells
         maxMp: 30,
         mp: 30,
-        defense: 0,
+        defense: 1, // Buffed from 0
     },
     [CharacterClass.ROGUE]: {
         maxHp: 55,
         hp: 55,
-        attack: 9,
+        attack: 9, 
         maxEp: 20,
         ep: 20,
-        defense: 1,
+        defense: 1, // Buffed to match Mage baseline, relies on Dodge/Burst
     }
 };
 
 export interface AbilityDetails {
     name: PlayerAbility;
     cost: number;
-    resource: 'MP' | 'EP' | 'None';
+    resource: 'MP' | 'EP' | 'SP' | 'None';
     description: string;
     element: Element;
     damageMultiplier: number;
@@ -64,11 +66,11 @@ export interface AbilityDetails {
 export const PLAYER_ABILITIES: Record<PlayerAbility, AbilityDetails> = {
     [PlayerAbility.EARTHEN_STRIKE]: {
         name: PlayerAbility.EARTHEN_STRIKE,
-        cost: 0,
-        resource: 'None',
-        description: 'Attack with earthen force. Grants a temporary defense boost and has a 20% chance to make the enemy Grounded, lowering their defense.',
+        cost: 8, // Now has a cost
+        resource: 'SP',
+        description: 'A heavy blow using Stamina. Grants a temporary defense boost and has a 20% chance to make the enemy Grounded.',
         element: Element.EARTH,
-        damageMultiplier: 1.2, // Small damage boost
+        damageMultiplier: 1.3,
         statusEffect: StatusEffectType.GROUNDED,
         statusChance: 0.2,
     },
@@ -76,9 +78,9 @@ export const PLAYER_ABILITIES: Record<PlayerAbility, AbilityDetails> = {
         name: PlayerAbility.FIREBALL,
         cost: 10,
         resource: 'MP',
-        description: 'Hurls a ball of fire, dealing medium magical damage. Has a 10% chance to Burn the target, causing damage over time.',
+        description: 'Hurls a ball of fire, dealing medium magical damage. Has a 10% chance to Burn the target.',
         element: Element.FIRE,
-        damageMultiplier: 1.5, // Medium damage boost
+        damageMultiplier: 1.5,
         statusEffect: StatusEffectType.BURN,
         statusChance: 0.1,
     },
@@ -86,9 +88,9 @@ export const PLAYER_ABILITIES: Record<PlayerAbility, AbilityDetails> = {
         name: PlayerAbility.ICE_SHARD,
         cost: 8,
         resource: 'MP',
-        description: 'Launches a shard of ice, dealing small magical damage. Has a 20% chance to Chill the target, lowering their attack.',
+        description: 'Launches a shard of ice, dealing small magical damage. Has a 20% chance to Chill the target.',
         element: Element.ICE,
-        damageMultiplier: 1.2, // Small damage boost
+        damageMultiplier: 1.2,
         statusEffect: StatusEffectType.CHILL,
         statusChance: 0.2,
     },
@@ -96,9 +98,9 @@ export const PLAYER_ABILITIES: Record<PlayerAbility, AbilityDetails> = {
         name: PlayerAbility.LIGHTNING_STRIKE,
         cost: 5,
         resource: 'EP',
-        description: 'A rapid strike imbued with lightning. Deals minor bonus damage and has a 20% chance to Shock the target, with a small chance to stun them.',
+        description: 'A rapid strike using Energy. Deals bonus damage and has a 20% chance to Shock the target.',
         element: Element.LIGHTNING,
-        damageMultiplier: 1.1, // Tiny damage boost
+        damageMultiplier: 1.1,
         statusEffect: StatusEffectType.SHOCK,
         statusChance: 0.2,
     }
@@ -108,7 +110,7 @@ export const PLAYER_ABILITIES: Record<PlayerAbility, AbilityDetails> = {
 export const CRIT_CHANCE = 0.1;
 export const CRIT_MULTIPLIER = 1.5;
 export const FLEE_CHANCE = 0.4;
-export const TRAVEL_ENCOUNTER_CHANCE = 0.35; // Reduced from 0.5 for better pacing
+export const TRAVEL_ENCOUNTER_CHANCE = 0.35;
 
 export const ELEMENTAL_RESISTANCES: Record<Element, Element> = {
     [Element.EARTH]: Element.LIGHTNING,

@@ -1,6 +1,6 @@
 
-import React, { useState, useEffect, useCallback, useRef, useReducer } from 'react';
-import { GameState, Item, ItemType, SaveData, CharacterClass, EnemyAbility, SocialChoice, AIPersonality, PlayerAbility, Element, StatusEffectType, StatusEffect, WorldData, GameAction, Enemy, SocialEncounter, EquipmentSlot } from './types';
+import React, { useState, useEffect, useCallback, useRef, useReducer, useMemo } from 'react';
+import { GameState, Item, ItemType, SaveData, CharacterClass, EnemyAbility, SocialChoice, AIPersonality, PlayerAbility, Element, StatusEffectType, StatusEffect, WorldData, GameAction, Enemy, SocialEncounter, EquipmentSlot, AppSettings } from './types';
 import { generateScene, generateEncounter, generateWorldData, generateExploreResult } from './services/geminiService';
 import { saveGameToStorage, loadGameFromStorage, checkSaveExists } from './services/storageService';
 import { Inventory } from './components/Inventory';
@@ -16,7 +16,8 @@ import { CombatView } from './components/views/CombatView';
 import { SocialEncounterView } from './components/views/SocialEncounterView';
 import { WorldMapView } from './components/views/WorldMapView';
 import { LogView } from './components/views/LogView';
-import { BoltIcon, FireIcon, MapIcon, BagIcon, SpeakerOnIcon, SpeakerOffIcon, BookIcon, ShieldIcon, SaveIcon, StarIcon } from './components/icons';
+import { SettingsView } from './components/views/SettingsView';
+import { BoltIcon, FireIcon, MapIcon, BagIcon, SpeakerOnIcon, SpeakerOffIcon, BookIcon, ShieldIcon, SaveIcon, StarIcon, SettingsIcon } from './components/icons';
 import { CRIT_CHANCE, CRIT_MULTIPLIER, FLEE_CHANCE, TRAVEL_ENCOUNTER_CHANCE, STATUS_EFFECT_CONFIG, ENEMY_STATUS_CHANCE, ENEMY_STATUS_MAP } from './constants';
 import { useAudio } from './hooks/useAudio';
 
@@ -34,32 +35,6 @@ const statusEffectIcons: Record<StatusEffectType, React.ReactNode> = {
     [StatusEffectType.EARTH_ARMOR]: <ShieldIcon className="w-5 h-5 text-green-500" />,
 };
 
-// Helper function to build and sanitize scene actions
-const getSceneActions = (localActions: GameAction[], worldData: WorldData, playerLocationId: string): GameAction[] => {
-    // Filter out any potential 'move' actions returned by the LLM from local actions
-    const filteredLocalActions = localActions.filter(a => a.type !== 'move');
-
-    // De-duplicate move actions based on target location ID
-    const moveTargetIds = new Set<string>();
-    worldData.connections
-        .filter(c => c.from === playerLocationId || c.to === playerLocationId)
-        .forEach(c => {
-            const targetId = c.from === playerLocationId ? c.to : c.from;
-            moveTargetIds.add(targetId);
-        });
-
-    const moveActions = Array.from(moveTargetIds).map(targetId => {
-        const targetLocation = worldData.locations.find(l => l.id === targetId);
-        return {
-            label: `Go to ${targetLocation?.name || '???' }`,
-            type: 'move' as const,
-            targetLocationId: targetId
-        };
-    });
-
-    return [...filteredLocalActions, ...moveActions];
-}
-
 const App: React.FC = () => {
     const [state, dispatch] = useReducer(reducer, initialState);
     const { gameState, player, enemies, storyText, actions, log, isPlayerTurn, socialEncounter, worldData, playerLocationId } = state;
@@ -68,20 +43,28 @@ const App: React.FC = () => {
     const [isMapOpen, setIsMapOpen] = useState(false);
     const [isLogOpen, setIsLogOpen] = useState(false);
     const [isJournalOpen, setIsJournalOpen] = useState(false);
+    const [isSettingsOpen, setIsSettingsOpen] = useState(false);
     const [saveFileExists, setSaveFileExists] = useState(false);
     const [showLevelUp, setShowLevelUp] = useState(false);
     const [eventPopups, setEventPopups] = useState<EventPopup[]>([]);
     const [isSaving, setIsSaving] = useState(false);
+    const [settings, setSettings] = useState<AppSettings>({ crtEnabled: true, textSpeed: 30 });
 
     const enemyTurnInProgress = useRef(false);
     const prevLevelRef = useRef(player.level);
     const isInitialMount = useRef(true);
     const prevPlayerLocationId = useRef<string | null>(null);
+    const combatActiveRef = useRef(false); // Track robustly if combat is active for timeouts
     
     // Async Operation Tracking to prevent race conditions
     const operationIdRef = useRef(0);
 
     const { isTtsEnabled, isSpeaking, toggleTts } = useAudio(storyText, gameState);
+
+    // Sync ref with state
+    useEffect(() => {
+        combatActiveRef.current = gameState === GameState.COMBAT;
+    }, [gameState]);
 
     useEffect(() => {
         // Check for save file asynchronously on mount
@@ -123,6 +106,41 @@ const App: React.FC = () => {
         dispatch({ type: 'ADD_ITEM_TO_INVENTORY', payload: itemDef });
     }, [appendToLog, createEventPopup]);
 
+    // Memoize the getSceneActions to avoid recalculation on every render
+    const currentSceneActions = useMemo(() => {
+        if (!worldData || !playerLocationId) return actions; // Fallback to state actions if data missing
+
+        // Filter out any potential 'move' actions returned by the LLM from local actions
+        const filteredLocalActions = (state.actions || []).filter(a => a.type !== 'move');
+
+        // De-duplicate move actions based on target location ID
+        const moveTargetIds = new Set<string>();
+        (worldData.connections || [])
+            .filter(c => c.from === playerLocationId || c.to === playerLocationId)
+            .forEach(c => {
+                const targetId = c.from === playerLocationId ? c.to : c.from;
+                moveTargetIds.add(targetId);
+            });
+
+        const moveActions = Array.from(moveTargetIds).map(targetId => {
+            const targetLocation = worldData.locations.find(l => l.id === targetId);
+            return {
+                label: `Go to ${targetLocation?.name || '???' }`,
+                type: 'move' as const,
+                targetLocationId: targetId
+            };
+        });
+
+        const combinedActions = [...filteredLocalActions, ...moveActions];
+        
+        // Ensure there is always at least one action to prevent empty UI
+        if (combinedActions.length === 0) {
+            return [{ label: "Explore Area", type: "explore" } as GameAction];
+        }
+
+        return combinedActions;
+    }, [worldData, playerLocationId, state.actions, actions]);
+
     const startNewGame = useCallback(() => {
         dispatch({ type: 'START_NEW_GAME' });
     }, []);
@@ -150,9 +168,8 @@ const App: React.FC = () => {
 
             if (isFallback) handleFallback();
 
-            const allActions = getSceneActions(localActions, newWorldData, newWorldData.startLocationId);
-
-            dispatch({ type: 'SET_SCENE', payload: { description: description, actions: allActions } });
+            // We set the scene here, but the Memoized Actions above will actually handle the 'move' logic for display
+            dispatch({ type: 'SET_SCENE', payload: { description: description, actions: localActions } });
             if (foundItem) {
                 handleFoundItem(foundItem);
             }
@@ -246,8 +263,9 @@ const App: React.FC = () => {
     
             if (result.nextSceneType === 'EXPLORATION') {
                 if (worldData && playerLocationId) {
-                    const newActions = getSceneActions(result.localActions || [], worldData, playerLocationId);
-                    dispatch({ type: 'SET_SCENE', payload: { description: result.description, actions: newActions } });
+                     // We update the local actions from the exploration result
+                     // The memoized 'currentSceneActions' will pick these up and combine with moves
+                    dispatch({ type: 'SET_SCENE', payload: { description: result.description, actions: result.localActions || [] } });
                     if (result.foundItem) {
                         handleFoundItem(result.foundItem);
                     }
@@ -280,6 +298,7 @@ const App: React.FC = () => {
         }
     }, [player, appendToLog, handleFoundItem, worldData, playerLocationId, handleFallback, actions, createEventPopup]);
 
+    // Handle Movement & Location Changes
     useEffect(() => {
         const prevLocationId = prevPlayerLocationId.current;
         prevPlayerLocationId.current = playerLocationId;
@@ -317,8 +336,7 @@ const App: React.FC = () => {
 
                         if (isFallback) handleFallback();
                          
-                        const newActions = getSceneActions(localActions, worldData, playerLocationId);
-                        dispatch({ type: 'SET_SCENE', payload: { description, actions: newActions } });
+                        dispatch({ type: 'SET_SCENE', payload: { description, actions: localActions } });
 
                         if (foundItem) handleFoundItem(foundItem);
                         dispatch({ type: 'SET_GAME_STATE', payload: GameState.EXPLORING });
@@ -385,9 +403,7 @@ const App: React.FC = () => {
 
         if (isFallback) handleFallback();
 
-        const newActions = getSceneActions(localActions, worldData, playerLocationId);
-
-        dispatch({ type: 'SET_SCENE', payload: { description, actions: newActions } });
+        dispatch({ type: 'SET_SCENE', payload: { description, actions: localActions } });
         if (foundItem) handleFoundItem(foundItem);
         dispatch({ type: 'SET_GAME_STATE', payload: GameState.EXPLORING });
 
@@ -471,9 +487,7 @@ const App: React.FC = () => {
 
                 if (isFallback) handleFallback();
                 
-                const newActions = getSceneActions(localActions, worldData, playerLocationId);
-                
-                dispatch({ type: 'SET_SCENE', payload: { description: choice.outcome, actions: newActions } });
+                dispatch({ type: 'SET_SCENE', payload: { description: choice.outcome, actions: localActions } });
     
                 if (foundItem) {
                     handleFoundItem(foundItem);
@@ -518,9 +532,15 @@ const App: React.FC = () => {
         };
 
         for (let i = 0; i < enemies.length; i++) {
+                // Combat Active Check: If player fled or game ended mid-turn, stop.
+                if (!combatActiveRef.current) break;
+
                 if (enemies[i].hp > 0 && currentHp > 0) { 
                 await new Promise(resolve => setTimeout(resolve, 1000));
                 
+                // Re-check after sleep
+                if (!combatActiveRef.current) break;
+
                 dispatch({ type: 'PROCESS_TURN_EFFECTS', payload: { target: 'enemy', index: i } });
                 const enemy = state.enemies[i]; 
 
@@ -564,6 +584,7 @@ const App: React.FC = () => {
                             for (let j=0; j<2; j++) {
                                 if(currentHp > 0) {
                                     await new Promise(resolve => setTimeout(resolve, 500));
+                                    if (!combatActiveRef.current) break;
                                     const multiDamage = Math.floor(enemy.attack * 0.7 + (Math.random() * 3 - 1));
                                     let playerDamageTakenMulti = player.isDefending ? Math.max(1, Math.floor(multiDamage / 2)) : multiDamage;
                                     playerDamageTakenMulti = Math.max(1, playerDamageTakenMulti - (player.defense || 0));
@@ -623,7 +644,9 @@ const App: React.FC = () => {
                 }
             }
         }
-        if (currentHp > 0) {
+        
+        // If combat is still active and player is alive, give turn back
+        if (combatActiveRef.current && currentHp > 0) {
             dispatch({ type: 'SET_PLAYER_TURN', payload: true });
         }
         enemyTurnInProgress.current = false;
@@ -638,7 +661,10 @@ const App: React.FC = () => {
         if (totalXpGained > 0) setTimeout(() => createEventPopup(`+${totalXpGained} XP`, 'xp'), 500);
         lootItems.forEach((item, index) => setTimeout(() => createEventPopup(`Found: ${item.name}!`, 'item'), 1000 + index * 500));
         
-        let regen = { hp: 0, mp: 0, ep: 0 };
+        let regen = { hp: 0, mp: 0, ep: 0, sp: 0 };
+        // Base small HP regen for everyone to keep momentum
+        regen.hp = Math.floor(player.maxHp * 0.05);
+
         if (player.class === CharacterClass.MAGE) {
             regen.mp = Math.floor((player.maxMp || 0) * 0.2);
             if(regen.mp > 0) setTimeout(() => createEventPopup(`+${regen.mp} MP`, 'heal'), 1500 + lootItems.length * 500);
@@ -646,9 +672,11 @@ const App: React.FC = () => {
             regen.ep = Math.floor((player.maxEp || 0) * 0.25);
             if (regen.ep > 0) setTimeout(() => createEventPopup(`+${regen.ep} EP`, 'heal'), 1500 + lootItems.length * 500);
         } else if (player.class === CharacterClass.WARRIOR) {
-            regen.hp = Math.floor(player.maxHp * 0.1);
-            if (regen.hp > 0) setTimeout(() => createEventPopup(`+${regen.hp} HP`, 'heal'), 1500 + lootItems.length * 500);
+            regen.sp = Math.floor((player.maxSp || 0) * 0.25);
+            if (regen.sp > 0) setTimeout(() => createEventPopup(`+${regen.sp} SP`, 'heal'), 1500 + lootItems.length * 500);
         }
+        
+        if (regen.hp > 0) setTimeout(() => createEventPopup(`+${regen.hp} HP`, 'heal'), 1800 + lootItems.length * 500);
 
         dispatch({ 
             type: 'PROCESS_COMBAT_VICTORY', 
@@ -685,7 +713,7 @@ const App: React.FC = () => {
             case GameState.GAME_OVER:
                 return <GameOverScreen onRestart={startNewGame} />;
             case GameState.EXPLORING:
-                return <ExploringView storyText={storyText} actions={actions} onAction={handleAction} />;
+                return <ExploringView storyText={storyText} actions={currentSceneActions} onAction={handleAction} />;
             case GameState.COMBAT:
                 return <CombatView 
                     storyText={storyText} 
@@ -711,21 +739,20 @@ const App: React.FC = () => {
         return `data:image/png;base64,${b64}`;
     };
 
-    const PlayerStatusCard = () => (
-        <div className="bg-gray-800/90 p-2 md:p-4 rounded-lg border-2 border-blue-500 shadow-lg flex flex-row md:flex-col gap-3 md:h-auto w-full">
+    const PlayerStatusCard = React.memo(() => (
+        <div className="bg-gray-800/90 p-2 md:p-3 rounded-lg border-2 border-blue-500 shadow-lg flex flex-row gap-4 items-center w-full max-w-6xl mx-auto">
             {player.portrait && (
-                <div className="w-16 h-16 md:w-full md:h-48 bg-black rounded-md border-2 border-gray-600 shrink-0 overflow-hidden">
+                <div className="w-16 h-16 md:w-20 md:h-20 bg-black rounded-md border-2 border-gray-600 shrink-0 overflow-hidden">
                     <img src={getPortraitSrc(player.portrait)} alt="Player" className="w-full h-full object-cover rounded-sm image-rendering-pixelated" />
                 </div>
             )}
-            <div className="flex flex-col flex-grow justify-between min-w-0">
+            <div className="flex flex-col flex-grow justify-between min-w-0 h-full">
                 <div>
                     <div className="flex justify-between items-baseline mb-1">
-                        <h2 className="text-sm md:text-lg font-press-start text-blue-300 truncate">{player.name}</h2>
-                        <span className="text-xs text-gray-400">Lvl {player.level} {player.class}</span>
+                        <h2 className="text-base md:text-xl font-press-start text-blue-300 truncate">{player.name}</h2>
+                        <span className="text-xs md:text-sm text-gray-400">Lvl {player.level} {player.class}</span>
                     </div>
-                    {/* Restored Stats Display for Mobile & Desktop */}
-                    <div className="flex justify-between text-xs mb-1 text-gray-300 font-mono">
+                    <div className="flex justify-between text-xs md:text-sm mb-1 text-gray-300 font-mono">
                         <span>ATK: <span className="text-red-300">{player.attack}</span></span>
                         <span>DEF: <span className="text-blue-300">{player.defense}</span></span>
                     </div>
@@ -734,7 +761,6 @@ const App: React.FC = () => {
                 <div className="flex flex-col gap-1 w-full mt-1">
                     <div className="w-full bg-black/50 rounded-full h-3 md:h-4 border border-gray-600 relative overflow-hidden">
                         <div className="bg-red-500 h-full transition-all duration-500" style={{ width: `${(player.hp / player.maxHp) * 100}%` }}></div>
-                        {/* HP Text Overlay for better visibility */}
                         <div className="absolute inset-0 flex items-center justify-center text-[8px] md:text-[10px] text-white font-bold drop-shadow-md">
                             {player.hp}/{player.maxHp} HP
                         </div>
@@ -755,6 +781,14 @@ const App: React.FC = () => {
                             </div>
                         </div>
                     )}
+                     {player.class === CharacterClass.WARRIOR && (
+                         <div className="w-full bg-black/50 rounded-full h-3 md:h-4 border border-gray-600 relative overflow-hidden">
+                            <div className="bg-amber-600 h-full transition-all duration-500" style={{ width: `${(player.sp! / player.maxSp!) * 100}%` }}></div>
+                             <div className="absolute inset-0 flex items-center justify-center text-[8px] md:text-[10px] text-white font-bold drop-shadow-md">
+                                {player.sp}/{player.maxSp} SP
+                            </div>
+                        </div>
+                    )}
                      <div className="w-full bg-black/50 rounded-full h-3 md:h-4 border border-gray-600 relative overflow-hidden">
                         <div className="bg-yellow-500 h-full transition-all duration-500" style={{ width: `${(player.xp / player.xpToNextLevel) * 100}%` }}></div>
                          <div className="absolute inset-0 flex items-center justify-center text-[8px] md:text-[10px] text-white font-bold drop-shadow-md">
@@ -764,14 +798,14 @@ const App: React.FC = () => {
                 </div>
             </div>
         </div>
-    );
+    ));
 
-    const ActionButtons = () => (
-        <div className="grid grid-cols-4 md:grid-cols-2 gap-2 h-full md:h-auto">
+    const ActionButtons = React.memo(() => (
+        <div className="flex items-center gap-2 w-full max-w-4xl mx-auto overflow-x-auto whitespace-nowrap pb-1 no-scrollbar">
             {(gameState === GameState.EXPLORING || gameState === GameState.COMBAT) && (
                 <button 
                     onClick={() => setIsInventoryOpen(true)} 
-                    className="flex items-center justify-center bg-purple-700 hover:bg-purple-600 disabled:opacity-50 text-white p-3 rounded-lg border-2 border-purple-500 active:scale-95 transition-all"
+                    className="flex-shrink-0 flex items-center justify-center bg-purple-700 hover:bg-purple-600 disabled:opacity-50 text-white p-3 rounded-lg border-2 border-purple-500 active:scale-95 transition-all w-14 h-14"
                     disabled={!isPlayerTurn && gameState === GameState.COMBAT}
                 >
                     <BagIcon className="w-6 h-6" />
@@ -779,13 +813,13 @@ const App: React.FC = () => {
             )}
             <button 
                 onClick={() => setIsJournalOpen(true)}
-                className="flex items-center justify-center bg-amber-700 hover:bg-amber-600 text-white p-3 rounded-lg border-2 border-amber-500 active:scale-95 transition-all"
+                className="flex-shrink-0 flex items-center justify-center bg-amber-700 hover:bg-amber-600 text-white p-3 rounded-lg border-2 border-amber-500 active:scale-95 transition-all w-14 h-14"
             >
                 <StarIcon className="w-6 h-6"/>
             </button>
             <button 
                 onClick={() => setIsLogOpen(true)}
-                className="flex items-center justify-center bg-yellow-700 hover:bg-yellow-600 text-white p-3 rounded-lg border-2 border-yellow-500 active:scale-95 transition-all"
+                className="flex-shrink-0 flex items-center justify-center bg-yellow-700 hover:bg-yellow-600 text-white p-3 rounded-lg border-2 border-yellow-500 active:scale-95 transition-all w-14 h-14"
             >
                 <BookIcon className="w-6 h-6"/>
             </button>
@@ -793,26 +827,34 @@ const App: React.FC = () => {
                 <>
                     <button 
                         onClick={() => setIsMapOpen(true)} 
-                        className="flex items-center justify-center bg-teal-700 hover:bg-teal-600 text-white p-3 rounded-lg border-2 border-teal-500 active:scale-95 transition-all"
+                        className="flex-shrink-0 flex items-center justify-center bg-teal-700 hover:bg-teal-600 text-white p-3 rounded-lg border-2 border-teal-500 active:scale-95 transition-all w-14 h-14"
                     >
                         <MapIcon className="w-6 h-6"/>
                     </button>
                     <button 
                         onClick={saveGame} 
                         disabled={isSaving}
-                        className={`flex items-center justify-center p-3 rounded-lg border-2 active:scale-95 transition-all ${isSaving ? 'bg-green-600 border-green-400 opacity-80 cursor-not-allowed' : 'bg-indigo-700 hover:bg-indigo-600 border-indigo-500 text-white'}`}
+                        className={`flex-shrink-0 flex items-center justify-center p-3 rounded-lg border-2 active:scale-95 transition-all w-14 h-14 ${isSaving ? 'bg-green-600 border-green-400 opacity-80 cursor-not-allowed' : 'bg-indigo-700 hover:bg-indigo-600 border-indigo-500 text-white'}`}
                     >
                         {isSaving ? <span className="text-xs font-bold animate-pulse">...</span> : <SaveIcon className="w-6 h-6" />}
                     </button>
                 </>
             )}
+             <button 
+                onClick={() => setIsSettingsOpen(true)}
+                className="flex-shrink-0 flex items-center justify-center bg-gray-700 hover:bg-gray-600 text-white p-3 rounded-lg border-2 border-gray-500 active:scale-95 transition-all w-14 h-14"
+            >
+                <SettingsIcon className="w-6 h-6"/>
+            </button>
         </div>
-    );
+    ));
 
     return (
-        <main className="h-[100dvh] w-full bg-gray-900 text-gray-200 overflow-hidden flex flex-col md:flex-row safe-pb" style={{
+        <main className="w-full bg-gray-900 text-gray-200 flex flex-col overflow-x-hidden min-h-[100dvh] min-h-[560px]" style={{
             backgroundImage: `radial-gradient(circle, rgba(31, 41, 55, 0.9) 0%, rgba(17, 24, 39, 1) 70%)`,
         }}>
+            {settings.crtEnabled && <div className="crt-effect" />}
+            
             <Inventory 
                 isOpen={isInventoryOpen}
                 onClose={() => setIsInventoryOpen(false)}
@@ -826,10 +868,11 @@ const App: React.FC = () => {
             <JournalView isOpen={isJournalOpen} onClose={() => setIsJournalOpen(false)} player={player} />
             <WorldMapView isOpen={isMapOpen} onClose={() => setIsMapOpen(false)} worldData={worldData} playerLocationId={playerLocationId} />
             <LogView isOpen={isLogOpen} onClose={() => setIsLogOpen(false)} log={log} />
+            <SettingsView isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} settings={settings} onUpdateSettings={s => setSettings(prev => ({ ...prev, ...s }))} />
 
             {/* Level Up Overlay */}
             {showLevelUp && (
-                <div className="absolute inset-0 bg-black/50 z-50 flex items-center justify-center pointer-events-none">
+                <div className="absolute inset-0 bg-black/50 z-50 flex items-center justify-center pointer-events-none fixed">
                     <h1 className="text-6xl md:text-8xl font-press-start text-yellow-300 animate-level-up" style={{textShadow: '4px 4px 0 #000'}}>
                         LEVEL UP!
                     </h1>
@@ -837,37 +880,23 @@ const App: React.FC = () => {
             )}
              
             {/* Popups */}
-            <div className="event-popup-container">
+            <div className="event-popup-container fixed">
                 {eventPopups.map(p => (
                     <div key={p.id} className={`event-popup ${p.type}`}>{p.text}</div>
                 ))}
             </div>
 
-            {/* Mobile: Top Status Bar */}
+            {/* Top Status Bar (All Screens) */}
             {!isScreenState && (
-                <div className="md:hidden p-2 bg-gray-900 border-b border-gray-700 z-10 shrink-0">
+                <div className="p-2 bg-gray-900 border-b border-gray-700 z-10 shrink-0">
                     <PlayerStatusCard />
                 </div>
             )}
 
-            {/* Desktop: Sidebar */}
-            <div className="hidden md:flex flex-col w-80 bg-gray-900 border-r border-gray-700 z-10 shrink-0 h-full">
-                {!isScreenState && (
-                    <>
-                        <div className="p-4 flex-grow overflow-y-auto">
-                            <PlayerStatusCard />
-                        </div>
-                        <div className="p-4 bg-gray-800 border-t border-gray-700">
-                             <ActionButtons />
-                        </div>
-                    </>
-                )}
-            </div>
-
             {/* Main Content Area */}
-            <div className="flex-1 flex flex-col relative min-w-0 h-full">
-                 <div className="flex-1 overflow-y-auto p-4 md:p-8 scroll-smooth pb-20 md:pb-8 relative min-h-0">
-                    <div className="max-w-4xl mx-auto h-full flex flex-col">
+            <div className="flex-1 flex flex-col relative min-w-0 min-h-0">
+                 <div className="flex-1 p-4 md:p-8 relative min-h-0 overflow-hidden flex flex-col">
+                    <div className="max-w-4xl mx-auto w-full h-full flex flex-col">
                         {renderGameContent()}
                     </div>
                     
@@ -881,9 +910,9 @@ const App: React.FC = () => {
                     )}
                  </div>
 
-                 {/* Mobile: Bottom Actions */}
+                 {/* Bottom Actions (All Screens) */}
                  {!isScreenState && (
-                    <div className="md:hidden p-2 bg-gray-900 border-t border-gray-700 z-10 shrink-0 pb-[env(safe-area-inset-bottom)]">
+                    <div className="p-2 bg-gray-900 border-t border-gray-700 z-10 shrink-0 pb-[env(safe-area-inset-bottom)]">
                         {gameState === GameState.COMBAT && !isPlayerTurn && (
                             <div className="text-center text-yellow-400 font-press-start animate-pulse mb-2 text-xs">Enemy Turn...</div>
                         )}

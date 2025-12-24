@@ -48,10 +48,6 @@ const handleLevelUp = (currentPlayer: Player): { updatedPlayer: Player; logs: st
     const newLevel = currentPlayer.level + 1;
     const newXpToNextLevel = Math.floor(currentPlayer.xpToNextLevel * 1.5);
 
-    // Apply strict base stat increases for level up to the *base*, recalculate totals
-    // Since we dynamically calculate stats now based on level, we just increment level.
-    // However, we need to update current HP/MP/EP caps.
-    
     let updatedPlayer: Player = {
         ...currentPlayer,
         level: newLevel,
@@ -80,6 +76,11 @@ const handleLevelUp = (currentPlayer: Player): { updatedPlayer: Player; logs: st
         updatedPlayer.maxEp = newMaxEp;
         updatedPlayer.ep = newMaxEp;
         logs.push('Max EP increased!');
+    } else if (updatedPlayer.class === CharacterClass.WARRIOR) {
+        const newMaxSp = (updatedPlayer.maxSp || 0) + 5;
+        updatedPlayer.maxSp = newMaxSp;
+        updatedPlayer.sp = newMaxSp;
+        logs.push('Max Stamina increased!');
     }
 
     return { updatedPlayer, logs };
@@ -223,6 +224,8 @@ export const reducer = (state: AppState, action: Action): AppState => {
             newPlayerState.mp = (newPlayerState.mp || 0) - abilityDetails.cost;
         } else if (abilityDetails.resource === 'EP') {
             newPlayerState.ep = (newPlayerState.ep || 0) - abilityDetails.cost;
+        } else if (abilityDetails.resource === 'SP') {
+            newPlayerState.sp = (newPlayerState.sp || 0) - abilityDetails.cost;
         }
         
         // Damage calculation uses player attack which now includes equipment
@@ -299,12 +302,14 @@ export const reducer = (state: AppState, action: Action): AppState => {
             hp: Math.min(state.player.maxHp, state.player.hp + regen.hp),
             mp: Math.min(state.player.maxMp || 0, (state.player.mp || 0) + regen.mp),
             ep: Math.min(state.player.maxEp || 0, (state.player.ep || 0) + regen.ep),
+            sp: Math.min(state.player.maxSp || 0, (state.player.sp || 0) + regen.sp),
             statusEffects: [], // Clear status effects after combat
         };
 
-        if (regen.hp > 0) newLog = appendToLog(newLog, `Your warrior's resolve recovers you ${regen.hp} HP.`);
-        if (regen.mp > 0) newLog = appendToLog(newLog, `You recovered ${regen.mp} MP.`);
-        if (regen.ep > 0) newLog = appendToLog(newLog, `You recovered ${regen.ep} EP.`);
+        if (regen.hp > 0) newLog = appendToLog(newLog, `Recovered ${regen.hp} HP.`);
+        if (regen.mp > 0) newLog = appendToLog(newLog, `Recovered ${regen.mp} MP.`);
+        if (regen.ep > 0) newLog = appendToLog(newLog, `Recovered ${regen.ep} EP.`);
+        if (regen.sp > 0) newLog = appendToLog(newLog, `Recovered ${regen.sp} Stamina.`);
         
         if (updatedPlayer.xp >= updatedPlayer.xpToNextLevel) {
             const { updatedPlayer: leveledUpPlayer, logs: levelUpLogs } = handleLevelUp(updatedPlayer);

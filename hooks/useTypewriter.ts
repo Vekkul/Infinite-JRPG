@@ -1,28 +1,40 @@
-import { useState, useEffect } from 'react';
+
+import { useState, useEffect, useRef } from 'react';
 
 export const useTypewriter = (text: string, speed: number = 30): string => {
   const [displayedText, setDisplayedText] = useState('');
+  const requestRef = useRef<number>(0);
+  const startTimeRef = useRef<number>(0);
+  const indexRef = useRef<number>(0);
 
   useEffect(() => {
-    // When the target text changes, reset the displayed text.
     setDisplayedText('');
+    indexRef.current = 0;
+    startTimeRef.current = 0;
 
-    if (text) {
-      let index = 0;
-      const intervalId = setInterval(() => {
-        if (index < text.length) {
-          // By using substring, we make the update idempotent and not dependent on the previous state.
-          // This avoids potential race conditions with state updates that can cause character skipping/duplication.
-          setDisplayedText(text.substring(0, index + 1));
-          index++;
-        } else {
-          clearInterval(intervalId);
-        }
-      }, speed);
+    if (!text) return;
 
-      // Cleanup function to clear the interval when the component unmounts or text changes.
-      return () => clearInterval(intervalId);
-    }
+    const animate = (time: number) => {
+      if (!startTimeRef.current) startTimeRef.current = time;
+      
+      const elapsed = time - startTimeRef.current;
+      
+      // Calculate how many characters should be shown based on speed and elapsed time
+      const charsToShow = Math.floor(elapsed / speed);
+      
+      if (charsToShow > indexRef.current) {
+        indexRef.current = charsToShow;
+        setDisplayedText(text.substring(0, indexRef.current));
+      }
+
+      if (indexRef.current < text.length) {
+        requestRef.current = requestAnimationFrame(animate);
+      }
+    };
+
+    requestRef.current = requestAnimationFrame(animate);
+
+    return () => cancelAnimationFrame(requestRef.current);
   }, [text, speed]);
 
   return displayedText;

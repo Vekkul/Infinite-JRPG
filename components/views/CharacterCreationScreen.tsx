@@ -8,9 +8,9 @@ interface CharacterCreationScreenProps {
 }
 
 const classDescriptions: Record<CharacterClass, string> = {
-    [CharacterClass.WARRIOR]: "A master of arms, boasting high health and powerful, reliable attacks.",
+    [CharacterClass.WARRIOR]: "A master of arms, boasting high health and powerful attacks. Uses Stamina to unleash heavy blows like Earthen Strike.",
     [CharacterClass.MAGE]: "Wields powerful magic fueled by Mana. Unleashes devastating spells like Fireball.",
-    [CharacterClass.ROGUE]: "A cunning opportunist who uses Energy to perform rapid attacks like Quick Strike."
+    [CharacterClass.ROGUE]: "A cunning opportunist who uses Energy to perform rapid attacks like Lightning Strike."
 };
 
 export const CharacterCreationScreen: React.FC<CharacterCreationScreenProps> = ({ onCreate }) => {
@@ -65,8 +65,8 @@ export const CharacterCreationScreen: React.FC<CharacterCreationScreenProps> = (
     };
 
     return (
-        <div className="flex flex-col items-center justify-start h-full animate-fade-in text-lg">
-            <h1 className="text-5xl font-press-start text-yellow-400 mb-6" style={{textShadow: '2px 2px 0 #000'}}>Create Your Hero</h1>
+        <div className="flex flex-col items-center justify-start flex-grow animate-fade-in text-lg overflow-y-auto h-full pr-2">
+            <h1 className="text-5xl font-press-start text-yellow-400 mb-6 text-center" style={{textShadow: '2px 2px 0 #000'}}>Create Your Hero</h1>
             
             <div className="w-full max-w-4xl grid grid-cols-1 md:grid-cols-2 gap-8">
                 {/* Left Side: Form */}
@@ -96,7 +96,7 @@ export const CharacterCreationScreen: React.FC<CharacterCreationScreenProps> = (
                                 </button>
                             ))}
                         </div>
-                        <p className="mt-2 text-gray-300 h-14">{classDescriptions[selectedClass]}</p>
+                        <p className="mt-2 text-gray-300 h-auto min-h-[3.5rem] text-sm md:text-base">{classDescriptions[selectedClass]}</p>
                     </div>
 
                     <div>
@@ -145,7 +145,7 @@ export const CharacterCreationScreen: React.FC<CharacterCreationScreenProps> = (
                 </div>
             </div>
             
-            <div className="mt-8 w-full max-w-sm">
+            <div className="mt-8 w-full max-w-sm pb-8">
                 <button
                     onClick={handleCreate}
                     disabled={!name.trim() || !portrait || isGenerating}
