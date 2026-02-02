@@ -1,6 +1,7 @@
+
 import React, { useState, useEffect, useCallback, useRef, useReducer, useMemo } from 'react';
 import { GameState, Item, ItemType, SaveData, CharacterClass, EnemyAbility, SocialChoice, AIPersonality, PlayerAbility, Element, StatusEffectType, StatusEffect, WorldData, GameAction, Enemy, SocialEncounter, EquipmentSlot, AppSettings } from './types';
-import { generateScene, generateEncounter, generateWorldData, generateExploreResult } from './services/geminiService';
+import { generateScene, generateEncounter, generateWorldData, generateExploreResult, generateImproviseResult } from './services/geminiService';
 import { saveGameToStorage, loadGameFromStorage, checkSaveExists } from './services/storageService';
 import { Inventory } from './components/Inventory';
 import { JournalView } from './components/JournalView';
@@ -221,6 +222,60 @@ const App: React.FC = () => {
             dispatch({ type: 'SET_GAME_STATE', payload: GameState.START_SCREEN });
         }
     }, [appendToLog, createEventPopup]);
+
+    const handleImprovise = useCallback(async (input: string) => {
+        if (!input.trim()) return;
+        const opId = ++operationIdRef.current;
+        dispatch({ type: 'SET_GAME_STATE', payload: GameState.LOADING });
+        appendToLog(`You attempt to: "${input}"`);
+
+        const result = await generateImproviseResult(player, input);
+        if (opId !== operationIdRef.current) return;
+
+        if (result.isFallback) handleFallback();
+
+        appendToLog(result.description);
+        
+        if (result.questUpdate) {
+             const quest = player.journal.quests.find(q => q.id === result.questUpdate?.questId);
+             if (quest) {
+                dispatch({ type: 'UPDATE_QUEST_STATUS', payload: { id: result.questUpdate.questId, status: result.questUpdate.status } });
+                createEventPopup(`Quest ${result.questUpdate.status === 'COMPLETED' ? 'Complete' : 'Failed'}: ${quest.title}`, 'quest');
+             }
+        }
+
+        if (result.nextSceneType === 'EXPLORATION') {
+             // We update the local actions from the exploration result
+             // The memoized 'currentSceneActions' will pick these up and combine with moves
+            dispatch({ type: 'SET_SCENE', payload: { description: result.description, actions: result.localActions || [] } });
+            if (result.foundItem) {
+                handleFoundItem(result.foundItem);
+            }
+            dispatch({ type: 'SET_GAME_STATE', payload: GameState.EXPLORING });
+
+        } else if (result.nextSceneType === 'SOCIAL') {
+            const encounter: SocialEncounter = {
+                description: result.description,
+                choices: result.socialChoices || []
+            };
+            if(encounter.choices.length > 0) {
+                dispatch({ type: 'SET_SOCIAL_ENCOUNTER', payload: encounter });
+            } else {
+                dispatch({ type: 'SET_SCENE', payload: { description: result.description, actions: actions } });
+                dispatch({ type: 'SET_GAME_STATE', payload: GameState.EXPLORING });
+            }
+        } else if (result.nextSceneType === 'COMBAT') {
+            const { enemies: newEnemies, isFallback } = await generateEncounter(player);
+            if (opId !== operationIdRef.current) return;
+
+            if (isFallback) handleFallback();
+            dispatch({ type: 'SET_ENEMIES', payload: newEnemies });
+            dispatch({ type: 'SET_SCENE', payload: { description: result.description, actions: [] } });
+            appendToLog(newEnemies.length > 0 ? newEnemies[0].description : 'An unseen foe strikes!');
+            dispatch({ type: 'SET_GAME_STATE', payload: GameState.COMBAT });
+            dispatch({ type: 'SET_PLAYER_TURN', payload: true });
+        }
+    }, [player, appendToLog, handleFoundItem, handleFallback, actions, createEventPopup]);
 
     const handleAction = useCallback(async (action: GameAction) => {
         const opId = ++operationIdRef.current;
@@ -712,7 +767,7 @@ const App: React.FC = () => {
             case GameState.GAME_OVER:
                 return <GameOverScreen onRestart={startNewGame} />;
             case GameState.EXPLORING:
-                return <ExploringView storyText={storyText} actions={currentSceneActions} onAction={handleAction} />;
+                return <ExploringView storyText={storyText} actions={currentSceneActions} onAction={handleAction} onImprovise={handleImprovise} />;
             case GameState.COMBAT:
                 return <CombatView 
                     storyText={storyText} 
@@ -722,7 +777,7 @@ const App: React.FC = () => {
                     onCombatAction={handleCombatAction}
                 />;
             case GameState.SOCIAL_ENCOUNTER:
-                return socialEncounter && <SocialEncounterView encounter={socialEncounter} onChoice={handleSocialChoice} />;
+                return socialEncounter && <SocialEncounterView encounter={socialEncounter} onChoice={handleSocialChoice} onImprovise={handleImprovise} />;
             default:
                 return null;
         }

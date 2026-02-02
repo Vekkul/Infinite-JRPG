@@ -1,15 +1,26 @@
 
-import React from 'react';
+import React, { useState } from 'react';
 import { SocialEncounter, SocialChoice } from '../../types';
 import { useTypewriter } from '../../hooks/useTypewriter';
+import { SparklesIcon } from '../icons';
 
 interface SocialEncounterViewProps {
   encounter: SocialEncounter;
   onChoice: (choice: SocialChoice) => void;
+  onImprovise: (input: string) => void;
 }
 
-export const SocialEncounterView: React.FC<SocialEncounterViewProps> = ({ encounter, onChoice }) => {
+export const SocialEncounterView: React.FC<SocialEncounterViewProps> = ({ encounter, onChoice, onImprovise }) => {
   const displayedText = useTypewriter(encounter.description, 30);
+  const [improviseInput, setImproviseInput] = useState('');
+
+  const handleImproviseSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (improviseInput.trim()) {
+      onImprovise(improviseInput);
+      setImproviseInput('');
+    }
+  };
 
   return (
     <div className="flex flex-col h-full">
@@ -19,7 +30,27 @@ export const SocialEncounterView: React.FC<SocialEncounterViewProps> = ({ encoun
       </div>
       
       {/* Fixed Bottom Choices */}
-      <div className="flex-shrink-0 pt-2 border-t border-gray-700/50 mt-auto">
+      <div className="flex-shrink-0 pt-2 border-t border-gray-700/50 mt-auto flex flex-col gap-3">
+        
+         {/* Improvise Form */}
+        <form onSubmit={handleImproviseSubmit} className="flex gap-2 w-full animate-fade-in">
+          <input
+            type="text"
+            value={improviseInput}
+            onChange={(e) => setImproviseInput(e.target.value)}
+            placeholder="Do something unexpected..."
+            className="flex-1 bg-gray-800 text-white p-3 rounded-lg border border-gray-600 focus:outline-none focus:border-yellow-500 placeholder-gray-500"
+            maxLength={60}
+          />
+          <button 
+            type="submit" 
+            disabled={!improviseInput.trim()}
+            className="bg-purple-700 hover:bg-purple-600 disabled:bg-gray-700 disabled:opacity-50 text-white p-3 rounded-lg border-2 border-purple-500 transition-colors"
+          >
+             <SparklesIcon className="w-6 h-6" />
+          </button>
+        </form>
+
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 md:gap-3">
           {encounter.choices.map((choice, index) => (
             <button 

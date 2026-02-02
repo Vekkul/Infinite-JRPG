@@ -306,6 +306,42 @@ export const generateExploreResult = async (player: Player, action: GameAction):
     }
 };
 
+export const generateImproviseResult = async (player: Player, input: string): Promise<{ description: string; nextSceneType: 'EXPLORATION' | 'SOCIAL' | 'COMBAT'; localActions?: GameAction[]; foundItem?: Omit<Item, 'quantity'>; socialChoices?: SocialChoice[]; questUpdate?: QuestUpdate; isFallback?: boolean; }> => {
+    try {
+        const context = getContextString(player);
+        const response = await callWithRetry<GenerateContentResponse>(() => getAi().models.generateContent({
+            model: TEXT_MODEL,
+            contents: `Context: ${context}. The player attempts a free-form action: "${input}". Resolve this action logically within the fantasy setting. If it's a skill check, assume a fair roll based on their class/level. Describe the outcome vividly. If the action triggers combat or a social event, transition accordingly. If the action is physically impossible or nonsensical for the genre, describe the failure gracefully.`,
+            config: {
+                systemInstruction: SYSTEM_INSTRUCTION,
+                responseMimeType: "application/json",
+                responseSchema: exploreResultSchema,
+                temperature: 0.85, 
+            },
+        }));
+
+        const data = safeJsonParse<any>(response.text, "generateImproviseResult");
+
+        return {
+            description: data.description,
+            nextSceneType: data.nextSceneType,
+            localActions: data.localActions,
+            foundItem: data.foundItem,
+            socialChoices: data.socialChoices,
+            questUpdate: data.questUpdate,
+        };
+
+    } catch (error) {
+        console.error("Improvise Generation failed:", error);
+        return {
+            description: "You hesitate, unsure if that is possible here. The moment passes.",
+            nextSceneType: 'EXPLORATION',
+            localActions: [{ label: "Look around", type: "explore" }],
+            isFallback: true,
+        };
+    }
+};
+
 export const generateScene = async (player: Player, location: MapLocation): Promise<{ description: string; actions: GameAction[]; foundItem?: Omit<Item, 'quantity'>; isFallback?: boolean; }> => {
     try {
         const context = getContextString(player);
