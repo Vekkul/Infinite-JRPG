@@ -1,5 +1,4 @@
 
-
 import { useReducer, useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { GameState, Item, ItemType, SaveData, EnemyAbility, SocialChoice, AIPersonality, PlayerAbility, Element, StatusEffectType, StatusEffect, GameAction, Enemy, SocialEncounter, EquipmentSlot, EventPopup, Recipe, Attributes } from '../types';
 import { generateScene, generateEncounter, generateWorldData, generateExploreResult, generateImproviseResult } from '../services/geminiService';
@@ -212,6 +211,7 @@ export const useGameEngine = () => {
             isLocalCombatRef.current = true;
             dispatch({ type: 'SAVE_SCENE_STATE' });
 
+            // Note: generateEncounter is now synchronous/local, no API call
             const { enemies: newEnemies, isFallback } = await generateEncounter(player);
             if (opId !== operationIdRef.current) return;
 
@@ -240,6 +240,7 @@ export const useGameEngine = () => {
             isLocalCombatRef.current = true;
             dispatch({ type: 'SAVE_SCENE_STATE' });
 
+            // Note: generateEncounter is now synchronous/local
             const { enemies: newEnemies, isFallback } = await generateEncounter(player);
             if (opId !== operationIdRef.current) return;
 
@@ -330,6 +331,7 @@ export const useGameEngine = () => {
                         // Optimization: Movement encounter. Do NOT save scene state as we want to generate new scene on win.
                         isLocalCombatRef.current = false;
 
+                        // Note: generateEncounter is now synchronous/local
                         const { enemies: newEnemies, isFallback } = await generateEncounter(player);
                         if (opId !== operationIdRef.current) return;
 
@@ -577,31 +579,45 @@ export const useGameEngine = () => {
             // DELAY 1: Post-player turn pause (600ms)
             await new Promise(resolve => setTimeout(resolve, 600));
     
+            // Weighted RNG Decision Logic
             const determineEnemyAction = (enemy: Enemy): 'attack' | EnemyAbility | null => {
                 if (!enemy.ability) return 'attack';
+                
+                const roll = Math.random();
                 const hpPercent = enemy.hp / enemy.maxHp;
+
                 switch (enemy.aiPersonality) {
+                    case AIPersonality.AGGRESSIVE:
+                        // 70% Attack, 20% Ability, 10% Wait/Fallthrough
+                        if (roll < 0.70) return 'attack';
+                        if (roll < 0.90) return enemy.ability;
+                        return 'attack';
+                    
                     case AIPersonality.DEFENSIVE:
+                         // High chance to Heal/Shield if low HP, otherwise balanced
                         if (hpPercent < 0.5 && (enemy.ability === EnemyAbility.HEAL || enemy.ability === EnemyAbility.SHIELD)) {
-                            if (enemy.ability === EnemyAbility.SHIELD && enemy.isShielded) return 'attack';
-                            return enemy.ability;
+                             // 60% chance to use defensive ability when low
+                             if (roll < 0.60) return enemy.ability;
                         }
+                        // Default Defensive: 40% Attack, 40% Defend/Ability, 20% Wait
+                        if (roll < 0.40) return 'attack';
+                        if (roll < 0.80) return enemy.ability;
                         return 'attack';
+
                     case AIPersonality.STRATEGIC:
-                        if (hpPercent < 0.3 && enemy.ability === EnemyAbility.HEAL) return EnemyAbility.HEAL;
-                        if (hpPercent < 0.7 && !enemy.isShielded && enemy.ability === EnemyAbility.SHIELD && Math.random() < 0.8) return EnemyAbility.SHIELD;
-                        if ((enemy.ability === EnemyAbility.DRAIN_LIFE || enemy.ability === EnemyAbility.MULTI_ATTACK) && Math.random() < 0.4) return enemy.ability;
-                        return 'attack';
+                        // Context aware. 
+                        if (enemy.ability === EnemyAbility.HEAL && hpPercent < 0.4) return EnemyAbility.HEAL;
+                        if (enemy.ability === EnemyAbility.SHIELD && !enemy.isShielded && roll < 0.7) return EnemyAbility.SHIELD;
+                        // Otherwise 60/40 split
+                        if (roll < 0.6) return 'attack';
+                        return enemy.ability;
+
                     case AIPersonality.WILD:
-                        if (enemy.ability === EnemyAbility.SHIELD && enemy.isShielded) return 'attack';
-                        if (Math.random() < 0.5) return enemy.ability;
-                        return 'attack';
-                    case AIPersonality.AGGRESSIVE: default:
-                        if ((enemy.ability === EnemyAbility.DRAIN_LIFE || enemy.ability === EnemyAbility.MULTI_ATTACK) && Math.random() < 0.3) return enemy.ability;
-                        if ((enemy.ability === EnemyAbility.HEAL || enemy.ability === EnemyAbility.SHIELD) && Math.random() < 0.15) {
-                            if (enemy.ability === EnemyAbility.SHIELD && enemy.isShielded) return 'attack';
-                            return enemy.ability;
-                        }
+                        // 50/50 Split
+                        if (roll < 0.5) return 'attack';
+                        return enemy.ability;
+
+                    default:
                         return 'attack';
                 }
             };

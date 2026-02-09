@@ -1,8 +1,8 @@
 
-
 import { GoogleGenAI, Type, Modality, GenerateContentResponse } from "@google/genai";
 import { Player, GameAction, Item, ItemType, EnemyAbility, SocialEncounter, RewardType, AIPersonality, MapLocation, WorldData, Element, Enemy, SocialChoice, EquipmentSlot, Quest, QuestUpdate } from '../types';
 import { assetService } from './assetService';
+import { BESTIARY, BestiaryEntry } from '../data/bestiary';
 
 // Helper to get a fresh instance of the API client
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY as string });
@@ -125,51 +125,6 @@ const exploreResultSchema = {
         questUpdate: { ...questUpdateSchema, description: "Optional quest update." }
     },
     required: ["description", "nextSceneType"]
-};
-
-const enemySchema = {
-    type: Type.OBJECT,
-    properties: {
-        name: {
-            type: Type.STRING,
-            description: "Monster name."
-        },
-        description: {
-            type: Type.STRING,
-            description: "Short description. Max 20 words."
-        },
-        hp: {
-            type: Type.INTEGER,
-            description: "Health points."
-        },
-        attack: {
-            type: Type.INTEGER,
-            description: "Attack power."
-        },
-        loot: {
-            ...itemSchema,
-            description: "Optional drop."
-        },
-        ability: {
-            type: Type.STRING,
-            description: `Optional ability: '${EnemyAbility.HEAL}', '${EnemyAbility.SHIELD}', '${EnemyAbility.MULTI_ATTACK}', '${EnemyAbility.DRAIN_LIFE}'.`
-        },
-        aiPersonality: {
-            type: Type.STRING,
-            description: `AI: '${AIPersonality.AGGRESSIVE}', '${AIPersonality.DEFENSIVE}', '${AIPersonality.STRATEGIC}', '${AIPersonality.WILD}'.`
-        },
-        element: {
-            type: Type.STRING,
-            description: `Element: '${Element.FIRE}', '${Element.ICE}', '${Element.LIGHTNING}', '${Element.EARTH}'.`
-        }
-    },
-    required: ["name", "description", "hp", "attack"]
-};
-
-const encounterSchema = {
-    type: Type.ARRAY,
-    description: "Array of 1-3 enemies.",
-    items: enemySchema,
 };
 
 const mapLocationSchema = {
@@ -380,28 +335,89 @@ export const generateScene = async (player: Player, location: MapLocation): Prom
     }
 };
 
+/**
+ * Generates an encounter using deterministic math and a pre-defined Bestiary.
+ * This completely avoids API calls for combat generation, making it fast and balanced.
+ */
 export const generateEncounter = async (player: Player): Promise<{ enemies: Enemy[]; isFallback?: boolean; }> => {
-     try {
-        const context = getContextString(player);
-        const numMonsters = Math.floor(Math.random() * 3) + 1; // 1, 2, or 3
-
-        const response = await callWithRetry<GenerateContentResponse>(() => getAi().models.generateContent({
-            model: TEXT_MODEL,
-            contents: `${context} Generate encounter with ${numMonsters} monster(s). Appropriate challenge.`,
-            config: {
-                systemInstruction: SYSTEM_INSTRUCTION,
-                responseMimeType: "application/json",
-                responseSchema: encounterSchema,
-                temperature: 0.6,
-            },
-        }));
-
-        const data = safeJsonParse<Omit<Enemy, 'maxHp' | 'isShielded' | 'statusEffects'>[]>(response.text, "generateEncounter");
+    try {
+        // 1. Determine Challenge Rating based on player level
+        const playerLevel = player.level;
         
-        if (!Array.isArray(data) || data.length === 0) {
-            throw new Error("Invalid response format from API");
+        // 2. Filter Bestiary for valid enemies (minLevel <= playerLevel)
+        // Add a small buffer so we can fight slightly lower level things for variety
+        const validEnemies = BESTIARY.filter(e => e.minLevel <= playerLevel + 1);
+        
+        if (validEnemies.length === 0) {
+            // Fallback if low level and somehow nothing matches (shouldn't happen with updated Bestiary)
+             return {
+                enemies: [{
+                    name: "Rat",
+                    description: "A small, angry rodent.",
+                    hp: 10, maxHp: 10, attack: 2,
+                    isShielded: false, statusEffects: [],
+                    aiPersonality: AIPersonality.WILD,
+                    element: Element.NONE
+                }],
+                isFallback: true
+            };
         }
-        return { enemies: data.map(enemy => ({ ...enemy, maxHp: enemy.hp, isShielded: false, statusEffects: [] })) };
+
+        // 3. Determine Number of Enemies (1-3)
+        // Skew towards 1 enemy at very low levels
+        let numEnemies = 1;
+        const roll = Math.random();
+        if (playerLevel > 2) {
+             if (roll > 0.85) numEnemies = 3;
+             else if (roll > 0.5) numEnemies = 2;
+        }
+
+        const encounterEnemies: Enemy[] = [];
+
+        for (let i = 0; i < numEnemies; i++) {
+            // Pick a random enemy from valid list
+            // Weight slightly towards enemies close to player level? For now, pure random from valid set.
+            const template = validEnemies[Math.floor(Math.random() * validEnemies.length)];
+            
+            // 4. Scale Stats
+            // Formula: Base + (LevelDifference * Scale) + RandomVariance
+            // We use Player Level for scaling to keep it relevant
+            
+            const levelDiff = Math.max(0, playerLevel - 1); // Levels past 1
+            const variance = 0.9 + (Math.random() * 0.3); // 0.9 to 1.2 multiplier
+
+            const hp = Math.floor((template.baseHp + (template.hpPerLevel * levelDiff)) * variance);
+            const attack = Math.floor((template.baseAttack + (template.atkPerLevel * levelDiff)) * variance);
+            
+            // Add Loot (Simple logic for now)
+            let loot: Omit<Item, 'quantity'> | undefined = undefined;
+            if (Math.random() < 0.15) {
+                loot = {
+                    name: "Gold Coin",
+                    description: "A shiny coin.",
+                    type: ItemType.MATERIAL,
+                    value: 10,
+                    stackLimit: 99
+                };
+            }
+
+            encounterEnemies.push({
+                name: template.name,
+                description: template.description,
+                hp: hp,
+                maxHp: hp,
+                attack: attack,
+                loot: loot,
+                ability: template.ability,
+                aiPersonality: template.aiPersonality,
+                element: template.element,
+                isShielded: false,
+                statusEffects: []
+            });
+        }
+        
+        return { enemies: encounterEnemies, isFallback: false };
+
     } catch (error) {
         console.error("Encounter Generation failed:", error);
         // Fallback enemy
@@ -409,8 +425,8 @@ export const generateEncounter = async (player: Player): Promise<{ enemies: Enem
         const attack = player.level * 4;
         return {
             enemies: [{
-                name: "Slime",
-                description: "A basic, gelatinous creature.",
+                name: "Glitch Ghost",
+                description: "An entity born of errors.",
                 hp: hp,
                 maxHp: hp,
                 attack: attack,
