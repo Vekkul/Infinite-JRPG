@@ -6,6 +6,12 @@ export const initialState: AppState = {
   gameState: GameState.START_SCREEN,
   player: {
       ...INITIAL_PLAYER_STATS,
+      // Ensure complex objects are fresh copies
+      attributes: { ...INITIAL_PLAYER_STATS.attributes },
+      abilities: [], 
+      inventory: [],
+      equipment: {},
+      statusEffects: [],
       journal: {
           quests: [],
           flags: [],

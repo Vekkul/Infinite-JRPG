@@ -1,6 +1,6 @@
 
 import React, { useState } from 'react';
-import { GameState, CharacterClass, Enemy, SocialEncounter, EquipmentSlot, AppSettings, EventPopup } from './types';
+import { GameState, Enemy, SocialEncounter, EquipmentSlot, AppSettings, EventPopup } from './types';
 import { Inventory } from './components/Inventory';
 import { JournalView } from './components/JournalView';
 import { StartScreen } from './components/views/StartScreen';
@@ -30,6 +30,11 @@ const statusEffectIcons: Record<StatusEffectType, React.ReactNode> = {
 const PlayerStatusCard = React.memo(({ player }: { player: any }) => {
     const { assetUrl } = useAsset(player.portrait);
     
+    // Determine which bars to show based on max stats
+    const showMana = player.maxMp > 15; // Arbitrary threshold to hide bar if stat is base/low
+    const showEnergy = player.maxEp > 15;
+    const showStamina = player.maxSp > 15;
+
     return (
         <div className="bg-gray-800/90 p-2 md:p-3 rounded-lg border-2 border-blue-500 shadow-lg flex flex-row gap-4 items-center w-full max-w-6xl mx-auto">
             <div className="w-16 h-16 md:w-20 md:h-20 bg-black rounded-md border-2 border-gray-600 shrink-0 overflow-hidden relative">
@@ -50,7 +55,7 @@ const PlayerStatusCard = React.memo(({ player }: { player: any }) => {
                                 ))}
                             </div>
                         </div>
-                        <span className="text-xs md:text-sm text-gray-400 shrink-0 ml-2">Lvl {player.level} {player.class}</span>
+                        <span className="text-xs md:text-sm text-gray-400 shrink-0 ml-2">Lvl {player.level} {player.className}</span>
                     </div>
                     <div className="flex justify-between text-xs md:text-sm mb-1 text-gray-300 font-mono">
                         <span>ATK: <span className="text-red-300">{player.attack}</span></span>
@@ -65,7 +70,7 @@ const PlayerStatusCard = React.memo(({ player }: { player: any }) => {
                             {player.hp}/{player.maxHp} HP
                         </div>
                     </div>
-                    {player.class === CharacterClass.MAGE && (
+                    {showMana && (
                          <div className="w-full bg-black/50 rounded-full h-3 md:h-4 border border-gray-600 relative overflow-hidden">
                             <div className="bg-blue-500 h-full transition-all duration-500" style={{ width: `${(player.mp! / player.maxMp!) * 100}%` }}></div>
                              <div className="absolute inset-0 flex items-center justify-center text-[8px] md:text-[10px] text-white font-bold drop-shadow-md">
@@ -73,7 +78,7 @@ const PlayerStatusCard = React.memo(({ player }: { player: any }) => {
                             </div>
                         </div>
                     )}
-                    {player.class === CharacterClass.ROGUE && (
+                    {showEnergy && (
                          <div className="w-full bg-black/50 rounded-full h-3 md:h-4 border border-gray-600 relative overflow-hidden">
                             <div className="bg-green-500 h-full transition-all duration-500" style={{ width: `${(player.ep! / player.maxEp!) * 100}%` }}></div>
                              <div className="absolute inset-0 flex items-center justify-center text-[8px] md:text-[10px] text-white font-bold drop-shadow-md">
@@ -81,7 +86,7 @@ const PlayerStatusCard = React.memo(({ player }: { player: any }) => {
                             </div>
                         </div>
                     )}
-                     {player.class === CharacterClass.WARRIOR && (
+                     {showStamina && (
                          <div className="w-full bg-black/50 rounded-full h-3 md:h-4 border border-gray-600 relative overflow-hidden">
                             <div className="bg-amber-600 h-full transition-all duration-500" style={{ width: `${(player.sp! / player.maxSp!) * 100}%` }}></div>
                              <div className="absolute inset-0 flex items-center justify-center text-[8px] md:text-[10px] text-white font-bold drop-shadow-md">
@@ -232,6 +237,7 @@ const App: React.FC = () => {
                 onUseItem={handleInventoryUse}
                 onEquipItem={handleInventoryEquip}
                 onUnequipItem={handleInventoryUnequip}
+                onCraftItem={handlers.handleCraftItem}
                 disabled={!isPlayerTurn && gameState === GameState.COMBAT}
             />
             <JournalView isOpen={isJournalOpen} onClose={() => setIsJournalOpen(false)} player={player} />

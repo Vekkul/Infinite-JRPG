@@ -1,5 +1,6 @@
+
 import React, { useState, useMemo, useCallback } from 'react';
-import { Enemy, EnemyAbility, Player, CharacterClass, PlayerAbility, StatusEffectType, Element } from '../../types';
+import { Enemy, EnemyAbility, Player, PlayerAbility, StatusEffectType, Element } from '../../types';
 import { StatusBar } from '../StatusBar';
 import { HealIcon, ShieldIcon, SwordIcon, RunIcon, FireIcon, BoltIcon, StarIcon } from '../icons';
 import { useTypewriter } from '../../hooks/useTypewriter';
@@ -109,6 +110,18 @@ export const CombatView: React.FC<CombatViewProps> = ({ storyText, enemies, play
         
         setActionType(type);
         setSelectedAbility(ability);
+
+        if (type === 'ability' && ability) {
+            const details = PLAYER_ABILITIES[ability];
+            // If it's a self-target ability (Heal, Buff), execute immediately or handle differently
+            if (details.healAmount || details.statusEffect === StatusEffectType.EARTH_ARMOR) {
+                 onCombatAction('ability', {
+                    ability: ability,
+                    targetIndex: 0, // Target index irrelevant for self-cast, but payload needed
+                });
+                return;
+            }
+        }
         
         if (activeEnemiesCount === 1) {
             const targetIndex = enemies.findIndex(e => e.hp > 0);
@@ -133,27 +146,39 @@ export const CombatView: React.FC<CombatViewProps> = ({ storyText, enemies, play
     }, [actionType, selectedAbility, onCombatAction, createDamagePopup]);
     
     const renderAbilities = useMemo(() => {
-        const abilities: React.ReactNode[] = [];
-        if (player.class === CharacterClass.WARRIOR) {
-            const ability = PLAYER_ABILITIES[PlayerAbility.EARTHEN_STRIKE];
-            const disabled = (player.sp ?? 0) < ability.cost;
-            abilities.push(<button key={ability.name} onClick={() => handleActionClick('ability', ability.name)} disabled={disabled} className="flex items-center justify-center gap-2 text-base md:text-lg bg-amber-800 hover:bg-amber-700 disabled:bg-gray-600 text-white font-bold py-3 px-4 rounded-lg border-2 border-amber-600 active:scale-95 transition-all">⛰️ {ability.name} ({ability.cost} SP)</button>)
-        }
-        if (player.class === CharacterClass.MAGE) {
-            const fireball = PLAYER_ABILITIES[PlayerAbility.FIREBALL];
-            const iceShard = PLAYER_ABILITIES[PlayerAbility.ICE_SHARD];
-            const fbDisabled = (player.mp ?? 0) < fireball.cost;
-            const isDisabled = (player.mp ?? 0) < iceShard.cost;
-            abilities.push(<button key={fireball.name} onClick={() => handleActionClick('ability', fireball.name)} disabled={fbDisabled} className="flex items-center justify-center gap-2 text-base md:text-lg bg-orange-700 hover:bg-orange-600 disabled:bg-gray-600 text-white font-bold py-3 px-4 rounded-lg border-2 border-orange-500 active:scale-95 transition-all"><FireIcon/> {fireball.name} ({fireball.cost} MP)</button>)
-            abilities.push(<button key={iceShard.name} onClick={() => handleActionClick('ability', iceShard.name)} disabled={isDisabled} className="flex items-center justify-center gap-2 text-base md:text-lg bg-cyan-700 hover:bg-cyan-600 disabled:bg-gray-600 text-white font-bold py-3 px-4 rounded-lg border-2 border-cyan-500 active:scale-95 transition-all">❄️ {iceShard.name} ({iceShard.cost} MP)</button>)
-        }
-        if (player.class === CharacterClass.ROGUE) {
-             const ability = PLAYER_ABILITIES[PlayerAbility.LIGHTNING_STRIKE];
-             const disabled = (player.ep ?? 0) < ability.cost;
-            abilities.push(<button key={ability.name} onClick={() => handleActionClick('ability', ability.name)} disabled={disabled} className="flex items-center justify-center gap-2 text-base md:text-lg bg-indigo-700 hover:bg-indigo-600 disabled:bg-gray-600 text-white font-bold py-3 px-4 rounded-lg border-2 border-indigo-500 active:scale-95 transition-all"><BoltIcon/> {ability.name} ({ability.cost} EP)</button>)
-        }
-        return <div className="grid grid-cols-1 gap-2 col-span-full max-h-48 overflow-y-auto pr-2">{abilities}</div>;
-    }, [player.class, player.sp, player.mp, player.ep, handleActionClick]);
+        return (
+            <div className="grid grid-cols-1 gap-2 col-span-full max-h-48 overflow-y-auto pr-2">
+                {player.abilities.map((abilityName) => {
+                    const details = PLAYER_ABILITIES[abilityName];
+                    if (!details) return null;
+                    
+                    let canAfford = true;
+                    if (details.resource === 'MP' && (player.mp < details.cost)) canAfford = false;
+                    if (details.resource === 'EP' && (player.ep < details.cost)) canAfford = false;
+                    if (details.resource === 'SP' && (player.sp < details.cost)) canAfford = false;
+
+                    let colorClass = "bg-gray-700 border-gray-500";
+                    if (details.element === Element.FIRE) colorClass = "bg-orange-700 border-orange-500 hover:bg-orange-600";
+                    else if (details.element === Element.ICE) colorClass = "bg-cyan-700 border-cyan-500 hover:bg-cyan-600";
+                    else if (details.element === Element.EARTH) colorClass = "bg-amber-800 border-amber-600 hover:bg-amber-700";
+                    else if (details.element === Element.LIGHTNING) colorClass = "bg-indigo-700 border-indigo-500 hover:bg-indigo-600";
+                    else if (details.healAmount) colorClass = "bg-green-700 border-green-500 hover:bg-green-600";
+
+                    return (
+                        <button 
+                            key={abilityName} 
+                            onClick={() => handleActionClick('ability', abilityName)} 
+                            disabled={!canAfford} 
+                            className={`flex items-center justify-between gap-2 text-base md:text-lg text-white font-bold py-3 px-4 rounded-lg border-2 active:scale-95 transition-all ${colorClass} disabled:opacity-50 disabled:grayscale`}
+                        >
+                            <span>{details.name}</span>
+                            <span className="text-xs font-mono bg-black/30 px-2 py-1 rounded">{details.cost} {details.resource}</span>
+                        </button>
+                    );
+                })}
+            </div>
+        );
+    }, [player.abilities, player.mp, player.ep, player.sp, handleActionClick]);
 
     return (
         <div className="flex flex-col h-full">
@@ -185,7 +210,7 @@ export const CombatView: React.FC<CombatViewProps> = ({ storyText, enemies, play
                      {isPlayerTurn && view === 'main' && (
                         <>
                             <button onClick={() => handleActionClick('attack')} className="flex items-center justify-center gap-2 text-base md:text-lg bg-red-700 hover:bg-red-600 text-white font-bold py-3 px-2 rounded-lg border-2 border-red-500 active:scale-95 transition-all"><SwordIcon/>Attack</button>
-                            <button onClick={() => setView('abilities')} className="flex items-center justify-center gap-2 text-base md:text-lg bg-purple-700 hover:bg-purple-600 text-white font-bold py-3 px-2 rounded-lg border-2 border-purple-500 active:scale-95 transition-all"><StarIcon />Ability</button>
+                            <button onClick={() => setView('abilities')} disabled={player.abilities.length === 0} className="flex items-center justify-center gap-2 text-base md:text-lg bg-purple-700 hover:bg-purple-600 disabled:bg-gray-700 text-white font-bold py-3 px-2 rounded-lg border-2 border-purple-500 active:scale-95 transition-all"><StarIcon />Ability</button>
                             <button onClick={() => onCombatAction('defend')} className="flex items-center justify-center gap-2 text-base md:text-lg bg-blue-700 hover:bg-blue-600 text-white font-bold py-3 px-2 rounded-lg border-2 border-blue-500 active:scale-95 transition-all"><ShieldIcon/>Defend</button>
                             <button onClick={() => onCombatAction('flee')} className="flex items-center justify-center gap-2 text-base md:text-lg bg-green-700 hover:bg-green-600 text-white font-bold py-3 px-2 rounded-lg border-2 border-green-500 active:scale-95 transition-all"><RunIcon/>Flee</button>
                         </>

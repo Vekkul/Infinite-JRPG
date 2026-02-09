@@ -1,22 +1,34 @@
 
-import { Player, CharacterClass, PlayerAbility, Element, StatusEffectType } from './types';
+import { Player, PlayerAbility, Element, StatusEffectType, Recipe, ItemType, EquipmentSlot } from './types';
 
-export const JRPG_SAVE_KEY = 'jrpgSaveDataV2';
+export const JRPG_SAVE_KEY = 'jrpgSaveDataV3';
 
 export const INITIAL_PLAYER_STATS: Player = {
   name: 'Hero',
-  class: CharacterClass.WARRIOR,
+  className: 'Adventurer',
   portrait: '',
+  attributes: {
+      strength: 5,
+      intelligence: 5,
+      agility: 5
+  },
   hp: 50,
   maxHp: 50,
+  mp: 20,
+  maxMp: 20,
+  ep: 20,
+  maxEp: 20,
+  sp: 20,
+  maxSp: 20,
   attack: 10,
-  defense: 1, // Standardized baseline
+  defense: 1, 
   level: 1,
   xp: 0,
   xpToNextLevel: 100,
   isDefending: false,
   inventory: [],
   equipment: {},
+  abilities: [],
   statusEffects: [],
   journal: {
       quests: [],
@@ -25,84 +37,91 @@ export const INITIAL_PLAYER_STATS: Player = {
   }
 };
 
-export const CLASS_STATS: Record<CharacterClass, Partial<Player>> = {
-    [CharacterClass.WARRIOR]: {
-        maxHp: 70,
-        hp: 70,
-        attack: 10, // Slightly reduced to account for high sustain/defense
-        defense: 2, // Tankiest
-        maxSp: 20, // Stamina
-        sp: 20,
-    },
-    [CharacterClass.MAGE]: {
-        maxHp: 45,
-        hp: 45,
-        attack: 6, // Low physical attack, relies on spells
-        maxMp: 30,
-        mp: 30,
-        defense: 1, // Buffed from 0
-    },
-    [CharacterClass.ROGUE]: {
-        maxHp: 55,
-        hp: 55,
-        attack: 9, 
-        maxEp: 20,
-        ep: 20,
-        defense: 1, // Buffed to match Mage baseline, relies on Dodge/Burst
-    }
-};
-
 export interface AbilityDetails {
     name: PlayerAbility;
     cost: number;
     resource: 'MP' | 'EP' | 'SP' | 'None';
     description: string;
     element: Element;
-    damageMultiplier: number;
+    damageMultiplier: number; // 0 if non-damaging
     statusEffect?: StatusEffectType;
     statusChance?: number;
+    healAmount?: number; // Multiplier of INT
 }
 
 export const PLAYER_ABILITIES: Record<PlayerAbility, AbilityDetails> = {
     [PlayerAbility.EARTHEN_STRIKE]: {
         name: PlayerAbility.EARTHEN_STRIKE,
-        cost: 8, // Now has a cost
+        cost: 8,
         resource: 'SP',
-        description: 'A heavy blow using Stamina. Grants a temporary defense boost and has a 20% chance to make the enemy Grounded.',
+        description: 'A heavy blow using Stamina. Grants a temporary defense boost.',
         element: Element.EARTH,
         damageMultiplier: 1.3,
-        statusEffect: StatusEffectType.GROUNDED,
-        statusChance: 0.2,
+        statusEffect: StatusEffectType.EARTH_ARMOR, // Apply to self logic handled in reducer
+        statusChance: 1.0, 
+    },
+    [PlayerAbility.POWER_SLASH]: {
+        name: PlayerAbility.POWER_SLASH,
+        cost: 12,
+        resource: 'SP',
+        description: 'A devastating physical attack that can crush defenses.',
+        element: Element.NONE,
+        damageMultiplier: 1.6,
     },
     [PlayerAbility.FIREBALL]: {
         name: PlayerAbility.FIREBALL,
         cost: 10,
         resource: 'MP',
-        description: 'Hurls a ball of fire, dealing medium magical damage. Has a 10% chance to Burn the target.',
+        description: 'Hurls a ball of fire. Chance to Burn.',
         element: Element.FIRE,
         damageMultiplier: 1.5,
         statusEffect: StatusEffectType.BURN,
-        statusChance: 0.1,
+        statusChance: 0.2,
     },
     [PlayerAbility.ICE_SHARD]: {
         name: PlayerAbility.ICE_SHARD,
-        cost: 8,
+        cost: 6,
         resource: 'MP',
-        description: 'Launches a shard of ice, dealing small magical damage. Has a 20% chance to Chill the target.',
+        description: 'Launches a shard of ice. Chance to Chill.',
         element: Element.ICE,
         damageMultiplier: 1.2,
         statusEffect: StatusEffectType.CHILL,
-        statusChance: 0.2,
+        statusChance: 0.3,
+    },
+    [PlayerAbility.ARCANE_BLAST]: {
+        name: PlayerAbility.ARCANE_BLAST,
+        cost: 15,
+        resource: 'MP',
+        description: 'A blast of pure magical energy.',
+        element: Element.NONE,
+        damageMultiplier: 1.8,
+    },
+    [PlayerAbility.HEAL]: {
+        name: PlayerAbility.HEAL,
+        cost: 12,
+        resource: 'MP',
+        description: 'Restores health using magical energy.',
+        element: Element.NONE,
+        damageMultiplier: 0,
+        healAmount: 4, // 4x Int
     },
     [PlayerAbility.LIGHTNING_STRIKE]: {
         name: PlayerAbility.LIGHTNING_STRIKE,
-        cost: 5,
+        cost: 8,
         resource: 'EP',
-        description: 'A rapid strike using Energy. Deals bonus damage and has a 20% chance to Shock the target.',
+        description: 'A rapid strike using Energy. Chance to Shock.',
         element: Element.LIGHTNING,
         damageMultiplier: 1.1,
         statusEffect: StatusEffectType.SHOCK,
         statusChance: 0.2,
+    },
+    [PlayerAbility.QUICK_STAB]: {
+        name: PlayerAbility.QUICK_STAB,
+        cost: 5,
+        resource: 'EP',
+        description: 'A very fast, low cost attack.',
+        element: Element.NONE,
+        damageMultiplier: 1.0, 
     }
 };
 
@@ -143,3 +162,56 @@ export const ENEMY_STATUS_MAP: Record<Element, StatusEffectType> = {
     [Element.EARTH]: StatusEffectType.GROUNDED,
     [Element.NONE]: StatusEffectType.BURN, // Should not happen
 };
+
+export const CRAFTING_RECIPES: Recipe[] = [
+    {
+        name: 'Greater Healing Potion',
+        description: 'A potent brew that heals 50 HP.',
+        ingredients: [{ name: 'Minor Healing Potion', quantity: 2 }],
+        result: {
+            name: 'Greater Healing Potion',
+            description: 'A glowing red potion that radiates warmth.',
+            type: ItemType.POTION,
+            value: 50,
+            stackLimit: 5,
+        }
+    },
+    {
+        name: 'Iron Sword',
+        description: 'A solid blade, better than a rusty one.',
+        ingredients: [{ name: 'Rusty Sword', quantity: 1 }, { name: 'Iron Ore', quantity: 1 }],
+        result: {
+            name: 'Iron Sword',
+            description: 'A reliable iron sword with a sharp edge.',
+            type: ItemType.WEAPON,
+            value: 5,
+            stackLimit: 1,
+            slot: EquipmentSlot.MAIN_HAND
+        }
+    },
+    {
+        name: 'Steel Plate',
+        description: 'Sturdy armor providing good protection.',
+        ingredients: [{ name: 'Leather Armor', quantity: 1 }, { name: 'Iron Ore', quantity: 1 }],
+        result: {
+            name: 'Steel Plate',
+            description: 'Heavy armor reinforced with steel plates.',
+            type: ItemType.ARMOR,
+            value: 5,
+            stackLimit: 1,
+            slot: EquipmentSlot.BODY
+        }
+    },
+    {
+        name: 'Elixir of Vitality',
+        description: 'A rare elixir that fully restores HP.',
+        ingredients: [{ name: 'Greater Healing Potion', quantity: 2 }, { name: 'Magic Dust', quantity: 1 }],
+        result: {
+            name: 'Elixir of Vitality',
+            description: 'A swirling golden liquid.',
+            type: ItemType.POTION,
+            value: 999,
+            stackLimit: 3,
+        }
+    }
+];

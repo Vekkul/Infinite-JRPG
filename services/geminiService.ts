@@ -1,10 +1,9 @@
 
 import { GoogleGenAI, Type, Modality, GenerateContentResponse } from "@google/genai";
-import { Player, GameAction, Item, ItemType, EnemyAbility, CharacterClass, SocialEncounter, RewardType, AIPersonality, MapLocation, WorldData, Element, Enemy, SocialChoice, EquipmentSlot, Quest, QuestUpdate } from '../types';
+import { Player, GameAction, Item, ItemType, EnemyAbility, SocialEncounter, RewardType, AIPersonality, MapLocation, WorldData, Element, Enemy, SocialChoice, EquipmentSlot, Quest, QuestUpdate } from '../types';
 import { assetService } from './assetService';
 
 // Helper to get a fresh instance of the API client
-// Optimized: Singleton instance to avoid overhead, assuming API_KEY doesn't change
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY as string });
 const getAi = () => ai;
 
@@ -38,11 +37,11 @@ const questUpdateSchema = {
 const itemSchema = {
     type: Type.OBJECT,
     properties: {
-        name: { type: Type.STRING, description: "The name of the item, e.g., 'Minor Healing Potion', 'Rusty Iron Sword', 'Leather Jerkin', 'Ancient Key'." },
+        name: { type: Type.STRING, description: "The name of the item, e.g., 'Minor Healing Potion', 'Rusty Iron Sword', 'Iron Ore', 'Wolf Pelt'." },
         description: { type: Type.STRING, description: "A brief, flavorful description of the item." },
-        type: { type: Type.STRING, enum: [ItemType.POTION, ItemType.WEAPON, ItemType.ARMOR, ItemType.KEY_ITEM], description: "The item type. Use KEY_ITEM for story objects." },
-        value: { type: Type.INTEGER, description: "For POTION: HP restored. WEAPON/ARMOR: Stat bonus. KEY_ITEM: 0." },
-        stackLimit: { type: Type.INTEGER, description: "Max stack size. Potions: 5-10. Equipment: 1. Key Items: 1."},
+        type: { type: Type.STRING, enum: [ItemType.POTION, ItemType.WEAPON, ItemType.ARMOR, ItemType.KEY_ITEM, ItemType.MATERIAL], description: "The item type. Use MATERIAL for crafting ingredients (ores, herbs, skins)." },
+        value: { type: Type.INTEGER, description: "For POTION: HP restored. WEAPON/ARMOR: Stat bonus. KEY_ITEM/MATERIAL: 0 or generic value." },
+        stackLimit: { type: Type.INTEGER, description: "Max stack size. Potions/Materials: 10. Equipment: 1. Key Items: 1."},
         slot: { type: Type.STRING, enum: [EquipmentSlot.MAIN_HAND, EquipmentSlot.BODY], description: "Only for WEAPON/ARMOR. Null for others."},
         traits: { type: Type.ARRAY, items: { type: Type.STRING }, description: "Optional narrative tags, e.g., ['cursed', 'glows', 'rusty']."}
     },
@@ -70,7 +69,7 @@ const sceneSchema = {
         },
         foundItem: {
             ...itemSchema,
-            description: "An item the player finds upon arriving in this scene. Optional, only include it about 25% of the time."
+            description: "An item the player finds upon arriving in this scene. Optional, only include it about 25% of the time. Use MATERIAL type occasionally."
         }
     },
     required: ["description", "localActions"],
@@ -254,7 +253,7 @@ const callWithRetry = async <T>(
 
 // --- Helper for Prompt Construction ---
 const getContextString = (player: Player) => {
-    let context = `Player Context: Level ${player.level} ${player.class}.`;
+    let context = `Player Context: Level ${player.level} ${player.className}.`;
     if (player.journal.quests.length > 0) {
         const activeQuests = player.journal.quests
             .filter(q => q.status === 'ACTIVE')
@@ -421,25 +420,10 @@ export const generateEncounter = async (player: Player): Promise<{ enemies: Enem
 };
 
 // Generates a deterministic pixel art style placeholder if image generation fails
-const getFallbackPortrait = (characterClass: CharacterClass): string => {
+const getFallbackPortrait = (): string => {
     let bgColor = "#4B5563"; // gray-600
     let mainColor = "#9CA3AF"; // gray-400
     
-    switch (characterClass) {
-        case CharacterClass.WARRIOR:
-            bgColor = "#7F1D1D"; // red-900
-            mainColor = "#FCA5A5"; // red-300
-            break;
-        case CharacterClass.MAGE:
-            bgColor = "#1E3A8A"; // blue-900
-            mainColor = "#93C5FD"; // blue-300
-            break;
-        case CharacterClass.ROGUE:
-            bgColor = "#064E3B"; // green-900
-            mainColor = "#6EE7B7"; // green-300
-            break;
-    }
-
     const svgString = `
     <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 8 8">
         <rect width="8" height="8" fill="${bgColor}" />
@@ -452,14 +436,14 @@ const getFallbackPortrait = (characterClass: CharacterClass): string => {
     return btoa(svgString);
 };
 
-export const generateCharacterPortrait = async (description: string, characterClass: CharacterClass): Promise<{ portrait: string; isFallback?: boolean; }> => {
+export const generateCharacterPortrait = async (description: string, className: string): Promise<{ portrait: string; isFallback?: boolean; }> => {
     try {
         const response = await callWithRetry<GenerateContentResponse>(() => getAi().models.generateContent({
             model: IMAGE_MODEL,
             contents: {
                 parts: [
                     {
-                        text: `A 16-bit pixel art portrait of a JRPG character. Class: ${characterClass}. Description: ${description}. Vibrant colors, fantasy style, head and shoulders view.`,
+                        text: `A 16-bit pixel art portrait of a JRPG character. Class: ${className}. Description: ${description}. Vibrant colors, fantasy style, head and shoulders view.`,
                     },
                 ],
             },
@@ -479,7 +463,7 @@ export const generateCharacterPortrait = async (description: string, characterCl
 
     } catch (error) {
         console.warn("Error generating character portrait, using fallback.", error);
-        return { portrait: getFallbackPortrait(characterClass), isFallback: true };
+        return { portrait: getFallbackPortrait(), isFallback: true };
     }
 };
 

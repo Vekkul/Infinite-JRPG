@@ -1,7 +1,8 @@
 
 import React, { useState } from 'react';
-import { Item, ItemType, Player, EquipmentSlot } from '../types';
+import { Item, ItemType, Player, EquipmentSlot, Recipe } from '../types';
 import { PotionIcon, SwordIcon, ShieldIcon } from './icons';
+import { CRAFTING_RECIPES } from '../constants';
 
 interface InventoryProps {
   isOpen: boolean;
@@ -11,11 +12,12 @@ interface InventoryProps {
   onUseItem: (item: Item, index: number) => void;
   onEquipItem: (item: Item, index: number) => void;
   onUnequipItem: (slot: EquipmentSlot) => void;
+  onCraftItem: (recipe: Recipe) => void;
   disabled?: boolean;
 }
 
-export const Inventory: React.FC<InventoryProps> = ({ isOpen, onClose, inventory, player, onUseItem, onEquipItem, onUnequipItem, disabled = false }) => {
-  const [activeTab, setActiveTab] = useState<'bag' | 'equipment'>('bag');
+export const Inventory: React.FC<InventoryProps> = ({ isOpen, onClose, inventory, player, onUseItem, onEquipItem, onUnequipItem, onCraftItem, disabled = false }) => {
+  const [activeTab, setActiveTab] = useState<'bag' | 'equipment' | 'crafting'>('bag');
 
   if (!isOpen) {
     return null;
@@ -26,6 +28,8 @@ export const Inventory: React.FC<InventoryProps> = ({ isOpen, onClose, inventory
           case ItemType.POTION: return <PotionIcon className="w-8 h-8"/>;
           case ItemType.WEAPON: return <SwordIcon className="w-8 h-8"/>;
           case ItemType.ARMOR: return <ShieldIcon className="w-8 h-8"/>;
+          case ItemType.MATERIAL: return <span className="text-2xl">🧱</span>;
+          case ItemType.KEY_ITEM: return <span className="text-2xl">🔑</span>;
           default: return <PotionIcon className="w-8 h-8"/>;
       }
   };
@@ -35,6 +39,13 @@ export const Inventory: React.FC<InventoryProps> = ({ isOpen, onClose, inventory
       if (item.type === ItemType.WEAPON) return `ATK +${item.value}`;
       if (item.type === ItemType.ARMOR) return `DEF +${item.value}`;
       return item.description;
+  };
+
+  // Helper to count items including stacks
+  const countItemQuantity = (itemName: string) => {
+    return inventory.reduce((total, item) => {
+        return item.name === itemName ? total + item.quantity : total;
+    }, 0);
   };
 
   return (
@@ -57,18 +68,24 @@ export const Inventory: React.FC<InventoryProps> = ({ isOpen, onClose, inventory
           </button>
         </div>
 
-        <div className="flex border-b border-gray-600">
+        <div className="flex border-b border-gray-600 overflow-x-auto">
             <button 
-                className={`flex-1 py-3 font-bold text-lg ${activeTab === 'bag' ? 'bg-gray-700 text-white' : 'bg-gray-800 text-gray-400 hover:bg-gray-700'}`}
+                className={`flex-1 py-3 font-bold text-lg min-w-[100px] ${activeTab === 'bag' ? 'bg-gray-700 text-white' : 'bg-gray-800 text-gray-400 hover:bg-gray-700'}`}
                 onClick={() => setActiveTab('bag')}
             >
                 Bag
             </button>
             <button 
-                className={`flex-1 py-3 font-bold text-lg ${activeTab === 'equipment' ? 'bg-gray-700 text-white' : 'bg-gray-800 text-gray-400 hover:bg-gray-700'}`}
+                className={`flex-1 py-3 font-bold text-lg min-w-[100px] ${activeTab === 'equipment' ? 'bg-gray-700 text-white' : 'bg-gray-800 text-gray-400 hover:bg-gray-700'}`}
                 onClick={() => setActiveTab('equipment')}
             >
-                Equipment & Stats
+                Stats
+            </button>
+            <button 
+                className={`flex-1 py-3 font-bold text-lg min-w-[100px] ${activeTab === 'crafting' ? 'bg-gray-700 text-white' : 'bg-gray-800 text-gray-400 hover:bg-gray-700'}`}
+                onClick={() => setActiveTab('crafting')}
+            >
+                Crafting
             </button>
         </div>
 
@@ -94,24 +111,26 @@ export const Inventory: React.FC<InventoryProps> = ({ isOpen, onClose, inventory
                             <p className="text-blue-300 text-sm font-bold">{renderDescription(item)}</p>
                             </div>
                         </div>
-                        {item.type === ItemType.POTION && (
-                            <button 
-                                onClick={() => onUseItem(item, index)} 
-                                className="bg-green-600 hover:bg-green-500 disabled:bg-gray-500 disabled:cursor-not-allowed text-white font-bold py-2 px-4 rounded border-2 border-green-800 hover:border-green-700 transition-all transform hover:scale-105"
-                                disabled={disabled}
-                            >
-                                Use
-                            </button>
-                        )}
-                        {(item.type === ItemType.WEAPON || item.type === ItemType.ARMOR) && (
-                            <button 
-                                onClick={() => onEquipItem(item, index)} 
-                                className="bg-blue-600 hover:bg-blue-500 disabled:bg-gray-500 disabled:cursor-not-allowed text-white font-bold py-2 px-4 rounded border-2 border-blue-800 hover:border-blue-700 transition-all transform hover:scale-105"
-                                disabled={disabled}
-                            >
-                                Equip
-                            </button>
-                        )}
+                        <div className="flex gap-2">
+                            {item.type === ItemType.POTION && (
+                                <button 
+                                    onClick={() => onUseItem(item, index)} 
+                                    className="bg-green-600 hover:bg-green-500 disabled:bg-gray-500 disabled:cursor-not-allowed text-white font-bold py-2 px-4 rounded border-2 border-green-800 hover:border-green-700 transition-all transform hover:scale-105"
+                                    disabled={disabled}
+                                >
+                                    Use
+                                </button>
+                            )}
+                            {(item.type === ItemType.WEAPON || item.type === ItemType.ARMOR) && (
+                                <button 
+                                    onClick={() => onEquipItem(item, index)} 
+                                    className="bg-blue-600 hover:bg-blue-500 disabled:bg-gray-500 disabled:cursor-not-allowed text-white font-bold py-2 px-4 rounded border-2 border-blue-800 hover:border-blue-700 transition-all transform hover:scale-105"
+                                    disabled={disabled}
+                                >
+                                    Equip
+                                </button>
+                            )}
+                        </div>
                         </li>
                     ))}
                     </ul>
@@ -174,6 +193,57 @@ export const Inventory: React.FC<InventoryProps> = ({ isOpen, onClose, inventory
                           </div>
                       </div>
                   </div>
+              </div>
+          )}
+
+          {activeTab === 'crafting' && (
+              <div className="space-y-4">
+                  <div className="bg-gray-900/50 p-4 rounded text-center text-sm text-gray-400 italic">
+                      Collect materials during your adventures to craft powerful items.
+                  </div>
+                  {CRAFTING_RECIPES.map((recipe, index) => {
+                      const canCraft = recipe.ingredients.every(ing => countItemQuantity(ing.name) >= ing.quantity);
+                      
+                      return (
+                          <div key={index} className="bg-gray-900/80 p-4 rounded-md border border-gray-700 flex flex-col gap-3">
+                              <div className="flex justify-between items-start">
+                                  <div className="flex items-center gap-3">
+                                      <div className="text-yellow-400">{renderIcon(recipe.result.type)}</div>
+                                      <div>
+                                          <h3 className="font-bold text-white text-lg">{recipe.result.name}</h3>
+                                          <p className="text-xs text-gray-400">{recipe.result.description}</p>
+                                      </div>
+                                  </div>
+                                  <button 
+                                      onClick={() => onCraftItem(recipe)}
+                                      disabled={!canCraft || disabled}
+                                      className={`px-4 py-2 rounded font-bold text-sm border-2 ${
+                                          canCraft 
+                                          ? 'bg-amber-600 hover:bg-amber-500 border-amber-400 text-white' 
+                                          : 'bg-gray-700 border-gray-600 text-gray-500 cursor-not-allowed'
+                                      }`}
+                                  >
+                                      Craft
+                                  </button>
+                              </div>
+                              
+                              <div className="bg-black/30 p-2 rounded text-sm">
+                                  <p className="text-xs text-gray-500 uppercase mb-1">Requires:</p>
+                                  <ul className="flex flex-wrap gap-x-4 gap-y-1">
+                                      {recipe.ingredients.map((ing, i) => {
+                                          const have = countItemQuantity(ing.name);
+                                          const hasEnough = have >= ing.quantity;
+                                          return (
+                                              <li key={i} className={`font-mono ${hasEnough ? 'text-green-400' : 'text-red-400'}`}>
+                                                  {ing.name} ({have}/{ing.quantity})
+                                              </li>
+                                          );
+                                      })}
+                                  </ul>
+                              </div>
+                          </div>
+                      );
+                  })}
               </div>
           )}
         </div>

@@ -1,6 +1,6 @@
 
 import { useReducer, useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { GameState, Item, ItemType, SaveData, CharacterClass, EnemyAbility, SocialChoice, AIPersonality, PlayerAbility, Element, StatusEffectType, StatusEffect, GameAction, Enemy, SocialEncounter, EquipmentSlot, EventPopup } from '../types';
+import { GameState, Item, ItemType, SaveData, EnemyAbility, SocialChoice, AIPersonality, PlayerAbility, Element, StatusEffectType, StatusEffect, GameAction, Enemy, SocialEncounter, EquipmentSlot, EventPopup, Recipe, Attributes } from '../types';
 import { generateScene, generateEncounter, generateWorldData, generateExploreResult, generateImproviseResult } from '../services/geminiService';
 import { saveGameToStorage, loadGameFromStorage, checkSaveExists } from '../services/storageService';
 import { reducer } from '../state/reducer';
@@ -78,7 +78,7 @@ export const useGameEngine = () => {
         dispatch({ type: 'START_NEW_GAME' });
     }, []);
 
-    const handleCharacterCreation = useCallback(async (details: { name: string; class: CharacterClass; portrait: string }) => {
+    const handleCharacterCreation = useCallback(async (details: { name: string; className: string; attributes: Attributes; abilities: PlayerAbility[]; portrait: string }) => {
         const opId = ++operationIdRef.current;
         dispatch({ type: 'CREATE_CHARACTER', payload: details });
         
@@ -94,7 +94,7 @@ export const useGameEngine = () => {
 
         const startLocation = newWorldData.locations.find(l => l.id === newWorldData.startLocationId);
         if (startLocation) {
-            const tempPlayer = { ...initialState.player, name: details.name, class: details.class, portrait: details.portrait };
+            const tempPlayer = { ...initialState.player, name: details.name, className: details.className, portrait: details.portrait };
             const { description, actions: localActions, foundItem, isFallback } = await generateScene(tempPlayer, startLocation);
             
             if (opId !== operationIdRef.current) return;
@@ -373,6 +373,11 @@ export const useGameEngine = () => {
        }
     }, [gameState]);
 
+    const handleCraftItem = useCallback((recipe: Recipe) => {
+        dispatch({ type: 'CRAFT_ITEM', payload: { recipe } });
+        createEventPopup(`Crafted ${recipe.result.name}!`, 'item');
+    }, [createEventPopup]);
+
 
     const loadSceneForCurrentLocation = useCallback(async () => {
         const opId = ++operationIdRef.current;
@@ -496,17 +501,21 @@ export const useGameEngine = () => {
             lootItems.forEach((item, index) => setTimeout(() => createEventPopup(`Found: ${item.name}!`, 'item'), 1000 + index * 500));
             
             let regen = { hp: 0, mp: 0, ep: 0, sp: 0 };
+            // Base regeneration
             regen.hp = Math.floor(player.maxHp * 0.05);
-    
-            if (player.class === CharacterClass.MAGE) {
-                regen.mp = Math.floor((player.maxMp || 0) * 0.2);
-                if(regen.mp > 0) setTimeout(() => createEventPopup(`+${regen.mp} MP`, 'heal'), 1500 + lootItems.length * 500);
-            } else if (player.class === CharacterClass.ROGUE) {
-                regen.ep = Math.floor((player.maxEp || 0) * 0.25);
-                if (regen.ep > 0) setTimeout(() => createEventPopup(`+${regen.ep} EP`, 'heal'), 1500 + lootItems.length * 500);
-            } else if (player.class === CharacterClass.WARRIOR) {
-                regen.sp = Math.floor((player.maxSp || 0) * 0.25);
-                if (regen.sp > 0) setTimeout(() => createEventPopup(`+${regen.sp} SP`, 'heal'), 1500 + lootItems.length * 500);
+
+            // Regenerate resources if they have them
+            if (player.maxMp > 0) {
+                 regen.mp = Math.max(1, Math.floor(player.maxMp * 0.15));
+                 setTimeout(() => createEventPopup(`+${regen.mp} MP`, 'heal'), 1500 + lootItems.length * 500);
+            }
+            if (player.maxEp > 0) {
+                regen.ep = Math.max(1, Math.floor(player.maxEp * 0.15));
+                setTimeout(() => createEventPopup(`+${regen.ep} EP`, 'heal'), 1500 + lootItems.length * 500);
+            }
+            if (player.maxSp > 0) {
+                regen.sp = Math.max(1, Math.floor(player.maxSp * 0.15));
+                setTimeout(() => createEventPopup(`+${regen.sp} SP`, 'heal'), 1500 + lootItems.length * 500);
             }
             
             if (regen.hp > 0) setTimeout(() => createEventPopup(`+${regen.hp} HP`, 'heal'), 1800 + lootItems.length * 500);
@@ -529,6 +538,9 @@ export const useGameEngine = () => {
         const runEnemyTurns = async () => {
             enemyTurnInProgress.current = true;
             let currentHp = player.hp;
+            
+            // DELAY 1: Post-player turn pause (600ms)
+            await new Promise(resolve => setTimeout(resolve, 600));
     
             const determineEnemyAction = (enemy: Enemy): 'attack' | EnemyAbility | null => {
                 if (!enemy.ability) return 'attack';
@@ -563,6 +575,8 @@ export const useGameEngine = () => {
                     if (!combatActiveRef.current) break;
     
                     if (enemies[i].hp > 0 && currentHp > 0) { 
+                    
+                    // DELAY 2: Pause before each enemy specific action (1000ms)
                     await new Promise(resolve => setTimeout(resolve, 1000));
                     
                     if (!combatActiveRef.current) break;
@@ -736,7 +750,8 @@ export const useGameEngine = () => {
             handleEquipItem,
             handleUnequipItem,
             handleCombatAction,
-            handleSocialChoice
+            handleSocialChoice,
+            handleCraftItem
         }
     };
 };

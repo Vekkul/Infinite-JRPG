@@ -1,7 +1,7 @@
 
-import { AppState, Action, GameState, Item, Player, CharacterClass, Enemy, RewardType, MapLocation, PlayerAbility, StatusEffect, StatusEffectType, Element, ItemType, EquipmentSlot, Quest } from '../types';
+import { AppState, Action, GameState, Item, Player, Enemy, RewardType, MapLocation, PlayerAbility, StatusEffect, StatusEffectType, Element, ItemType, EquipmentSlot, Quest, Attributes } from '../types';
 import { initialState } from './initialState';
-import { CLASS_STATS, PLAYER_ABILITIES, ELEMENTAL_RESISTANCES, STATUS_EFFECT_CONFIG } from '../constants';
+import { PLAYER_ABILITIES, ELEMENTAL_RESISTANCES, STATUS_EFFECT_CONFIG } from '../constants';
 
 const appendToLog = (log: string[], message: string): string[] => {
     return [...log.slice(-20), message];
@@ -24,14 +24,48 @@ const addItemToInventory = (inventory: Item[], itemDef: Omit<Item, 'quantity'>):
     return newInventory;
 };
 
-const calculatePlayerStats = (player: Player): { attack: number, defense: number, maxHp: number } => {
-    const baseStats = CLASS_STATS[player.class];
-    const levelBonusHp = (player.level - 1) * 20;
-    const levelBonusAtk = (player.level - 1) * 5;
+const removeItemFromInventory = (inventory: Item[], itemName: string, quantityToRemove: number): Item[] => {
+    let newInventory = [...inventory];
+    let remaining = quantityToRemove;
+    
+    for (let i = 0; i < newInventory.length; i++) {
+        if (newInventory[i].name === itemName) {
+            if (newInventory[i].quantity >= remaining) {
+                newInventory[i] = { ...newInventory[i], quantity: newInventory[i].quantity - remaining };
+                remaining = 0;
+            } else {
+                remaining -= newInventory[i].quantity;
+                newInventory[i] = { ...newInventory[i], quantity: 0 };
+            }
+            if (remaining === 0) break;
+        }
+    }
+    return newInventory.filter(item => item.quantity > 0);
+};
 
-    let attack = (baseStats.attack || 10) + levelBonusAtk;
-    let maxHp = (baseStats.maxHp || 50) + levelBonusHp;
-    let defense = (baseStats.defense || 0);
+// Dynamic Stat Calculation based on Attributes
+const calculatePlayerDerivedStats = (player: Player): Partial<Player> => {
+    const { strength, intelligence, agility } = player.attributes;
+    const level = player.level;
+
+    // Base Formulas
+    // HP: 40 + (STR * 4) + (Level * 10)
+    const maxHp = 40 + (strength * 4) + (level * 10);
+    
+    // MP: Intelligence * 5
+    const maxMp = intelligence * 5;
+    
+    // SP: Strength * 3
+    const maxSp = strength * 3;
+    
+    // EP: Agility * 4
+    const maxEp = agility * 4;
+
+    // Attack: 2 + (STR * 1.5) + (Level * 2)
+    let attack = Math.floor(2 + (strength * 1.5) + (level * 2));
+    
+    // Defense: AGI * 0.5
+    let defense = Math.floor(agility * 0.5);
 
     // Add Equipment Stats
     if (player.equipment[EquipmentSlot.MAIN_HAND]) {
@@ -41,47 +75,51 @@ const calculatePlayerStats = (player: Player): { attack: number, defense: number
         defense += player.equipment[EquipmentSlot.BODY]?.value || 0;
     }
 
-    return { attack, defense, maxHp };
+    return { 
+        maxHp, maxMp, maxSp, maxEp, attack, defense, 
+        hp: player.hp > maxHp ? maxHp : player.hp, // Clamp logic usually handled elsewhere, but safe to default
+        mp: player.mp > maxMp ? maxMp : player.mp,
+        sp: player.sp > maxSp ? maxSp : player.sp,
+        ep: player.ep > maxEp ? maxEp : player.ep
+    };
 };
 
 const handleLevelUp = (currentPlayer: Player): { updatedPlayer: Player; logs: string[] } => {
     const newLevel = currentPlayer.level + 1;
     const newXpToNextLevel = Math.floor(currentPlayer.xpToNextLevel * 1.5);
 
-    let updatedPlayer: Player = {
+    // Increase attributes slightly on level up (1 point distributed cyclically or just +1 to all every few levels? Let's do simple scaling)
+    // Every level grants +1 to all attributes to keep it powerful
+    const newAttributes = {
+        strength: currentPlayer.attributes.strength + 1,
+        intelligence: currentPlayer.attributes.intelligence + 1,
+        agility: currentPlayer.attributes.agility + 1,
+    };
+
+    let tempPlayer: Player = {
         ...currentPlayer,
         level: newLevel,
+        attributes: newAttributes,
         xp: currentPlayer.xp - currentPlayer.xpToNextLevel,
         xpToNextLevel: newXpToNextLevel,
     };
     
-    const stats = calculatePlayerStats(updatedPlayer);
-    updatedPlayer.maxHp = stats.maxHp;
-    updatedPlayer.attack = stats.attack;
-    updatedPlayer.defense = stats.defense;
-    updatedPlayer.hp = stats.maxHp; // Full heal on level up
+    const derivedStats = calculatePlayerDerivedStats(tempPlayer);
+    
+    // Full heal on level up
+    const updatedPlayer = {
+        ...tempPlayer,
+        ...derivedStats,
+        hp: derivedStats.maxHp!,
+        mp: derivedStats.maxMp!,
+        sp: derivedStats.maxSp!,
+        ep: derivedStats.maxEp!,
+    };
 
     const logs = [
         `LEVEL UP! You are now level ${newLevel}!`,
-        `HP and Attack increased!`
+        `Your attributes increased! HP, MP, SP, EP, ATK, and DEF have improved.`
     ];
-
-    if (updatedPlayer.class === CharacterClass.MAGE) {
-        const newMaxMp = (updatedPlayer.maxMp || 0) + 10;
-        updatedPlayer.maxMp = newMaxMp;
-        updatedPlayer.mp = newMaxMp;
-        logs.push('Max MP increased!');
-    } else if (updatedPlayer.class === CharacterClass.ROGUE) {
-        const newMaxEp = (updatedPlayer.maxEp || 0) + 5;
-        updatedPlayer.maxEp = newMaxEp;
-        updatedPlayer.ep = newMaxEp;
-        logs.push('Max EP increased!');
-    } else if (updatedPlayer.class === CharacterClass.WARRIOR) {
-        const newMaxSp = (updatedPlayer.maxSp || 0) + 5;
-        updatedPlayer.maxSp = newMaxSp;
-        updatedPlayer.sp = newMaxSp;
-        logs.push('Max Stamina increased!');
-    }
 
     return { updatedPlayer, logs };
 };
@@ -91,7 +129,6 @@ const applyStatusEffect = (target: Player | Enemy, effect: StatusEffect): { targ
     const existingEffectIndex = newTarget.statusEffects.findIndex(e => e.type === effect.type);
 
     if (existingEffectIndex !== -1) {
-        // Refresh duration of existing effect
         newTarget.statusEffects[existingEffectIndex] = { ...newTarget.statusEffects[existingEffectIndex], duration: effect.duration };
     } else {
         newTarget.statusEffects.push(effect);
@@ -113,17 +150,28 @@ export const reducer = (state: AppState, action: Action): AppState => {
       };
     
     case 'CREATE_CHARACTER': {
-        const { name, class: characterClass, portrait } = action.payload;
-        const classStats = CLASS_STATS[characterClass];
+        const { name, className, attributes, abilities, portrait } = action.payload;
 
-        const startingPlayer: Player = {
+        let startingPlayer: Player = {
             ...initialState.player,
-            ...classStats,
             name,
-            class: characterClass,
+            className,
+            attributes,
+            abilities,
             portrait,
             statusEffects: [],
-            journal: { quests: [], flags: [], notes: [] }, // Ensure journal is init
+            journal: { quests: [], flags: [], notes: [] },
+        };
+
+        // Calculate initial derived stats based on choices
+        const derived = calculatePlayerDerivedStats(startingPlayer);
+        startingPlayer = {
+            ...startingPlayer,
+            ...derived,
+            hp: derived.maxHp!,
+            mp: derived.maxMp!,
+            ep: derived.maxEp!,
+            sp: derived.maxSp!
         };
 
         return {
@@ -132,7 +180,7 @@ export const reducer = (state: AppState, action: Action): AppState => {
             gameState: GameState.LOADING,
             worldData: null,
             playerLocationId: null,
-            log: [`The adventure of ${name} the ${characterClass} begins...`],
+            log: [`The adventure of ${name} the ${className} begins...`],
         };
     }
     
@@ -220,57 +268,58 @@ export const reducer = (state: AppState, action: Action): AppState => {
         let newPlayerState = {...state.player};
         
         // Use resources
-        if (abilityDetails.resource === 'MP') {
-            newPlayerState.mp = (newPlayerState.mp || 0) - abilityDetails.cost;
-        } else if (abilityDetails.resource === 'EP') {
-            newPlayerState.ep = (newPlayerState.ep || 0) - abilityDetails.cost;
-        } else if (abilityDetails.resource === 'SP') {
-            newPlayerState.sp = (newPlayerState.sp || 0) - abilityDetails.cost;
-        }
+        if (abilityDetails.resource === 'MP') newPlayerState.mp = (newPlayerState.mp || 0) - abilityDetails.cost;
+        if (abilityDetails.resource === 'EP') newPlayerState.ep = (newPlayerState.ep || 0) - abilityDetails.cost;
+        if (abilityDetails.resource === 'SP') newPlayerState.sp = (newPlayerState.sp || 0) - abilityDetails.cost;
         
-        // Damage calculation uses player attack which now includes equipment
-        let damage = Math.floor(state.player.attack * abilityDetails.damageMultiplier + (Math.random() * 5));
+        if (abilityDetails.healAmount && abilityDetails.healAmount > 0) {
+            // Self Heal Ability
+            const healVal = Math.floor(newPlayerState.attributes.intelligence * abilityDetails.healAmount);
+            newPlayerState.hp = Math.min(newPlayerState.maxHp, newPlayerState.hp + healVal);
+            newLog = appendToLog(newLog, `You cast ${abilityDetails.name} and heal for ${healVal} HP.`);
+        } else {
+            // Offensive Ability
+            let damage = Math.floor(state.player.attack * abilityDetails.damageMultiplier + (Math.random() * 5));
 
-        // Check for elemental resistance
-        if (target.element && ELEMENTAL_RESISTANCES[target.element] === abilityDetails.element) {
-            damage = Math.floor(damage / 2);
-            newLog = appendToLog(newLog, `${target.name} resists the ${abilityDetails.element} attack!`);
-        }
-
-        // Check for target status effects (Grounded)
-        if (target.statusEffects.some(e => e.type === StatusEffectType.GROUNDED)) {
-            damage = Math.floor(damage * (1 + STATUS_EFFECT_CONFIG.GROUNDED.defenseReduction));
-        }
-        
-        const damageTaken = target.isShielded ? Math.floor(damage / 2) : damage;
-        const newHp = Math.max(0, target.hp - damageTaken);
-        newEnemies[targetIndex] = { ...target, hp: newHp };
-        newLog = appendToLog(newLog, `You use ${abilityDetails.name} on ${target.name} for ${damageTaken} damage!`);
-        
-        if (newHp <= 0) {
-             newLog = appendToLog(newLog, `${target.name} is defeated!`);
-        } else if (abilityDetails.statusEffect && Math.random() < (abilityDetails.statusChance || 0)) {
-            // Apply status effect
-            const effect: StatusEffect = {
-                type: abilityDetails.statusEffect,
-                duration: STATUS_EFFECT_CONFIG[abilityDetails.statusEffect].duration,
-            };
-            if (effect.type === StatusEffectType.BURN) {
-                effect.sourceAttack = state.player.attack;
+            if (target.element && ELEMENTAL_RESISTANCES[target.element] === abilityDetails.element) {
+                damage = Math.floor(damage / 2);
+                newLog = appendToLog(newLog, `${target.name} resists the ${abilityDetails.element} attack!`);
             }
-            const { target: updatedTarget, log: effectLog } = applyStatusEffect(newEnemies[targetIndex], effect);
-            newEnemies[targetIndex] = updatedTarget as Enemy;
-            newLog = appendToLog(newLog, effectLog);
-        }
-        
-        // Apply Earthen Strike's defense boost to player
-        if (ability === PlayerAbility.EARTHEN_STRIKE) {
-            const { target: updatedPlayer, log: effectLog } = applyStatusEffect(newPlayerState, {
-                type: StatusEffectType.EARTH_ARMOR,
-                duration: STATUS_EFFECT_CONFIG.EARTH_ARMOR.duration,
-            });
-            newPlayerState = updatedPlayer as Player;
-            newLog = appendToLog(newLog, effectLog);
+
+            if (target.statusEffects.some(e => e.type === StatusEffectType.GROUNDED)) {
+                damage = Math.floor(damage * (1 + STATUS_EFFECT_CONFIG.GROUNDED.defenseReduction));
+            }
+            
+            const damageTaken = target.isShielded ? Math.floor(damage / 2) : damage;
+            const newHp = Math.max(0, target.hp - damageTaken);
+            newEnemies[targetIndex] = { ...target, hp: newHp };
+            newLog = appendToLog(newLog, `You use ${abilityDetails.name} on ${target.name} for ${damageTaken} damage!`);
+            
+            if (newHp <= 0) {
+                 newLog = appendToLog(newLog, `${target.name} is defeated!`);
+            } else if (abilityDetails.statusEffect && Math.random() < (abilityDetails.statusChance || 0)) {
+                if (abilityDetails.statusEffect === StatusEffectType.EARTH_ARMOR) {
+                    // Apply to self
+                    const { target: updatedPlayer, log: effectLog } = applyStatusEffect(newPlayerState, {
+                        type: StatusEffectType.EARTH_ARMOR,
+                        duration: STATUS_EFFECT_CONFIG.EARTH_ARMOR.duration,
+                    });
+                    newPlayerState = updatedPlayer as Player;
+                    newLog = appendToLog(newLog, effectLog);
+                } else {
+                    // Apply to enemy
+                     const effect: StatusEffect = {
+                        type: abilityDetails.statusEffect,
+                        duration: STATUS_EFFECT_CONFIG[abilityDetails.statusEffect].duration,
+                    };
+                    if (effect.type === StatusEffectType.BURN) {
+                        effect.sourceAttack = state.player.attack;
+                    }
+                    const { target: updatedTarget, log: effectLog } = applyStatusEffect(newEnemies[targetIndex], effect);
+                    newEnemies[targetIndex] = updatedTarget as Enemy;
+                    newLog = appendToLog(newLog, effectLog);
+                }
+            }
         }
 
         return { ...state, player: newPlayerState, enemies: newEnemies, log: newLog };
@@ -303,7 +352,7 @@ export const reducer = (state: AppState, action: Action): AppState => {
             mp: Math.min(state.player.maxMp || 0, (state.player.mp || 0) + regen.mp),
             ep: Math.min(state.player.maxEp || 0, (state.player.ep || 0) + regen.ep),
             sp: Math.min(state.player.maxSp || 0, (state.player.sp || 0) + regen.sp),
-            statusEffects: [], // Clear status effects after combat
+            statusEffects: [], 
         };
 
         if (regen.hp > 0) newLog = appendToLog(newLog, `Recovered ${regen.hp} HP.`);
@@ -341,24 +390,21 @@ export const reducer = (state: AppState, action: Action): AppState => {
         const itemIndex = action.payload.inventoryIndex;
         const itemToEquip = state.player.inventory[itemIndex];
         
-        if (!itemToEquip.slot) return state; // Should not happen
+        if (!itemToEquip.slot) return state;
 
         let newInventory = [...state.player.inventory];
         let newEquipment = { ...state.player.equipment };
         let newLog = [...state.log];
 
-        // Unequip current item in that slot if exists
         if (newEquipment[itemToEquip.slot]) {
             const unequippedItem = newEquipment[itemToEquip.slot]!;
             newInventory = addItemToInventory(newInventory, unequippedItem);
             newLog = appendToLog(newLog, `Unequipped ${unequippedItem.name}.`);
         }
 
-        // Equip new item
         newEquipment[itemToEquip.slot] = { ...itemToEquip, quantity: 1 };
         newLog = appendToLog(newLog, `Equipped ${itemToEquip.name}.`);
 
-        // Remove from inventory
         const itemStack = { ...newInventory[itemIndex] };
         itemStack.quantity -= 1;
         if (itemStack.quantity <= 0) {
@@ -367,13 +413,12 @@ export const reducer = (state: AppState, action: Action): AppState => {
             newInventory[itemIndex] = itemStack;
         }
 
-        // Recalculate stats
         let tempPlayer = { ...state.player, inventory: newInventory, equipment: newEquipment };
-        const newStats = calculatePlayerStats(tempPlayer);
+        const derived = calculatePlayerDerivedStats(tempPlayer);
 
         return {
             ...state,
-            player: { ...tempPlayer, ...newStats },
+            player: { ...tempPlayer, ...derived },
             log: newLog
         };
     }
@@ -389,12 +434,30 @@ export const reducer = (state: AppState, action: Action): AppState => {
         let newInventory = addItemToInventory(state.player.inventory, itemToUnequip);
         
         let tempPlayer = { ...state.player, inventory: newInventory, equipment: newEquipment };
-        const newStats = calculatePlayerStats(tempPlayer);
+        const derived = calculatePlayerDerivedStats(tempPlayer);
 
         return {
             ...state,
-            player: { ...tempPlayer, ...newStats },
+            player: { ...tempPlayer, ...derived },
             log: appendToLog(state.log, `Unequipped ${itemToUnequip.name}.`)
+        };
+    }
+
+    case 'CRAFT_ITEM': {
+        const { recipe } = action.payload;
+        let newInventory = [...state.player.inventory];
+        let newLog = [...state.log];
+
+        for (const ingredient of recipe.ingredients) {
+            newInventory = removeItemFromInventory(newInventory, ingredient.name, ingredient.quantity);
+        }
+        newInventory = addItemToInventory(newInventory, recipe.result);
+        newLog = appendToLog(newLog, `Crafted ${recipe.result.name}!`);
+
+        return {
+            ...state,
+            player: { ...state.player, inventory: newInventory },
+            log: newLog
         };
     }
 
@@ -411,7 +474,7 @@ export const reducer = (state: AppState, action: Action): AppState => {
         const { enemyIndex, damage } = action.payload;
         const enemiesCopy = [...state.enemies];
         const enemy = enemiesCopy[enemyIndex];
-        const healAmount = Math.floor(damage * 0.5); // Heals for 50% of damage dealt
+        const healAmount = Math.floor(damage * 0.5); 
         
         const newEnemyHp = Math.min(enemy.maxHp, enemy.hp + healAmount);
         enemiesCopy[enemyIndex] = { ...enemy, hp: newEnemyHp };
@@ -429,7 +492,7 @@ export const reducer = (state: AppState, action: Action): AppState => {
     case 'APPLY_STATUS_EFFECT': {
         let newLog = [...state.log];
         if (action.payload.target === 'player') {
-            const { target: updatedPlayer, log: effectLog } = applyStatusEffect(state.player.hp > 0 ? state.player : state.player, action.payload.effect);
+            const { target: updatedPlayer, log: effectLog } = applyStatusEffect(state.player, action.payload.effect);
             newLog = appendToLog(newLog, effectLog);
             return { ...state, player: updatedPlayer as Player, log: newLog };
         } else if (action.payload.target === 'enemy' && action.payload.index !== undefined) {
@@ -455,7 +518,6 @@ export const reducer = (state: AppState, action: Action): AppState => {
             const remainingEffects: StatusEffect[] = [];
 
             for (const effect of updatedTarget.statusEffects) {
-                // Apply effects
                 switch(effect.type) {
                     case StatusEffectType.BURN:
                         const burnDamage = Math.floor((effect.sourceAttack || 5) * 0.5);
@@ -464,7 +526,6 @@ export const reducer = (state: AppState, action: Action): AppState => {
                         break;
                 }
 
-                // Decrement duration
                 const newDuration = effect.duration - 1;
                 if (newDuration > 0) {
                     remainingEffects.push({ ...effect, duration: newDuration });
@@ -512,7 +573,6 @@ export const reducer = (state: AppState, action: Action): AppState => {
             }
         }
         
-        // Handle Quest Updates
         if (choice.questUpdate) {
              const qIndex = newJournal.quests.findIndex(q => q.id === choice.questUpdate!.questId);
              if (qIndex !== -1) {
@@ -539,7 +599,6 @@ export const reducer = (state: AppState, action: Action): AppState => {
                     break;
                 case RewardType.QUEST:
                     if (choice.reward.quest) {
-                        // Avoid duplicate quests
                         if (!newJournal.quests.some(q => q.id === choice.reward.quest!.id)) {
                              newJournal.quests = [...newJournal.quests, choice.reward.quest];
                              newLog = appendToLog(newLog, `Quest Started: ${choice.reward.quest.title}`);

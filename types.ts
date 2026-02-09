@@ -10,12 +10,6 @@ export enum GameState {
   JOURNAL = 'JOURNAL', 
 }
 
-export enum CharacterClass {
-    WARRIOR = 'Warrior',
-    MAGE = 'Mage',
-    ROGUE = 'Rogue',
-}
-
 export enum Element {
     FIRE = 'FIRE',
     ICE = 'ICE',
@@ -43,6 +37,7 @@ export enum ItemType {
   WEAPON = 'WEAPON',
   ARMOR = 'ARMOR',
   KEY_ITEM = 'KEY_ITEM', 
+  MATERIAL = 'MATERIAL',
 }
 
 export enum EquipmentSlot {
@@ -69,6 +64,10 @@ export enum PlayerAbility {
     ICE_SHARD = 'Ice Shard',
     EARTHEN_STRIKE = 'Earthen Strike',
     LIGHTNING_STRIKE = 'Lightning Strike',
+    HEAL = 'Heal',
+    POWER_SLASH = 'Power Slash',
+    QUICK_STAB = 'Quick Stab',
+    ARCANE_BLAST = 'Arcane Blast'
 }
 
 export interface Item {
@@ -80,6 +79,19 @@ export interface Item {
   stackLimit: number;
   slot?: EquipmentSlot; 
   traits?: string[]; 
+}
+
+// --- Crafting ---
+export interface Ingredient {
+    name: string;
+    quantity: number;
+}
+
+export interface Recipe {
+    name: string;
+    description: string;
+    ingredients: Ingredient[];
+    result: Omit<Item, 'quantity'>;
 }
 
 // --- Quest & Journal System ---
@@ -96,29 +108,45 @@ export interface PlayerJournal {
     notes: string[]; 
 }
 
+export interface Attributes {
+    strength: number; // HP & SP & Attack
+    intelligence: number; // MP & Magic Attack
+    agility: number; // EP & Defense/Crit
+}
+
 export interface Player {
   name: string;
-  class: CharacterClass;
+  className: string; // Custom class name
   portrait: string; 
+  
+  // Base Stats
+  attributes: Attributes;
+
+  // Derived Vitals
   hp: number;
   maxHp: number;
-  mp?: number; 
-  maxMp?: number;
-  ep?: number; 
-  maxEp?: number;
-  sp?: number; // Stamina Points (Warrior)
-  maxSp?: number;
+  mp: number; 
+  maxMp: number;
+  ep: number; 
+  maxEp: number;
+  sp: number; 
+  maxSp: number;
+  
   attack: number;
   defense: number; 
+  
   level: number;
   xp: number;
   xpToNextLevel: number;
+  
   isDefending: boolean;
   inventory: Item[];
   equipment: {
     [EquipmentSlot.MAIN_HAND]?: Item;
     [EquipmentSlot.BODY]?: Item;
   };
+  
+  abilities: PlayerAbility[]; // List of learned abilities
   statusEffects: StatusEffect[];
   journal: PlayerJournal; 
 }
@@ -236,7 +264,7 @@ export interface AppState {
 
 export type Action =
   | { type: 'START_NEW_GAME' }
-  | { type: 'CREATE_CHARACTER'; payload: { name: string; class: CharacterClass; portrait: string } }
+  | { type: 'CREATE_CHARACTER'; payload: { name: string; className: string; attributes: Attributes; abilities: PlayerAbility[]; portrait: string } }
   | { type: 'LOAD_GAME'; payload: SaveData }
   | { type: 'SAVE_GAME' }
   | { type: 'SET_GAME_STATE'; payload: GameState }
@@ -254,6 +282,7 @@ export type Action =
   | { type: 'USE_ITEM'; payload: { inventoryIndex: number } }
   | { type: 'EQUIP_ITEM'; payload: { inventoryIndex: number } }
   | { type: 'UNEQUIP_ITEM'; payload: { slot: EquipmentSlot } }
+  | { type: 'CRAFT_ITEM'; payload: { recipe: Recipe } }
   | { type: 'ENEMY_ACTION_HEAL'; payload: { enemyIndex: number; healAmount: number } }
   | { type: 'ENEMY_ACTION_DRAIN_LIFE', payload: { enemyIndex: number; damage: number } }
   | { type: 'ENEMY_ACTION_SHIELD'; payload: { enemyIndex: number } }
