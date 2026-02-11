@@ -1,5 +1,6 @@
 
-import React, { useState, useMemo, useCallback } from 'react';
+
+import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import { Enemy, EnemyAbility, Player, PlayerAbility, StatusEffectType, Element } from '../../types';
 import { StatusBar } from '../StatusBar';
 import { HealIcon, ShieldIcon, SwordIcon, RunIcon, FireIcon, BoltIcon, StarIcon } from '../icons';
@@ -30,12 +31,25 @@ const statusEffectIcons: Record<StatusEffectType, React.ReactNode> = {
 };
 
 // Memoized Sub-Component for individual Enemies to prevent mass re-renders
-const EnemyUnit = React.memo(({ enemy, index, damagePopups }: { enemy: Enemy, index: number, damagePopups: DamagePopup[] }) => {
+const EnemyUnit = React.memo(({ enemy, index, damagePopups, onTarget }: { enemy: Enemy, index: number, damagePopups: DamagePopup[], onTarget: (index: number) => void }) => {
+    const [isShaking, setIsShaking] = useState(false);
+    
+    // Trigger shake when a new damage popup appears
+    useEffect(() => {
+        if (damagePopups.length > 0) {
+            setIsShaking(true);
+            const timer = setTimeout(() => setIsShaking(false), 400); // Shake duration
+            return () => clearTimeout(timer);
+        }
+    }, [damagePopups]);
+
     return (
-        <div 
-            className={`relative bg-gray-800/90 p-3 rounded-lg border-2 shadow-lg animate-fade-in w-full sm:w-48 text-center transition-all duration-300 ${
-                enemy.isShielded ? 'border-cyan-400 shadow-lg shadow-cyan-400/50 animate-pulse' : 'border-red-500/80'
-            }`}
+        <button 
+            onClick={() => onTarget(index)}
+            className={`relative bg-gray-800/90 p-3 rounded-lg border-2 shadow-lg w-full sm:w-48 text-center transition-all duration-300 hover:scale-105 active:scale-95 group ${
+                enemy.isShielded ? 'border-cyan-400 shadow-lg shadow-cyan-400/50 animate-pulse' : 'border-red-500/80 hover:border-red-400'
+            } ${isShaking ? 'shake' : ''}`}
+            disabled={enemy.hp <= 0}
         >
             {damagePopups.map(p => (
                 <div key={p.id} className={`damage-popup ${p.isCrit ? 'crit' : ''}`}>
@@ -47,9 +61,9 @@ const EnemyUnit = React.memo(({ enemy, index, damagePopups }: { enemy: Enemy, in
                 <h2 className="text-lg font-cinzel font-bold text-red-200 truncate max-w-[80%]" title={enemy.name}>{enemy.name}</h2>
                 
                 {/* Info Tooltip */}
-                <div className="group/info relative flex items-center justify-center">
+                <div className="relative flex items-center justify-center" onClick={(e) => e.stopPropagation()}>
                     <div className="w-5 h-5 rounded-full border border-gray-500 text-gray-400 text-xs flex items-center justify-center cursor-help hover:bg-gray-700 hover:text-white transition-colors bg-gray-900 font-serif italic">i</div>
-                    <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-56 bg-gray-900/95 backdrop-blur-sm border border-yellow-500/30 text-white text-xs p-3 rounded-lg shadow-2xl opacity-0 group-hover/info:opacity-100 transition-opacity pointer-events-none z-[100] text-left font-sans">
+                    <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-56 bg-gray-900/95 backdrop-blur-sm border border-yellow-500/30 text-white text-xs p-3 rounded-lg shadow-2xl opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-[100] text-left font-sans">
                         <p className="font-bold font-cinzel text-yellow-500 mb-1 text-sm">{enemy.name}</p>
                         <p className="italic text-gray-300 mb-2 leading-relaxed font-serif">{enemy.description}</p>
                         <div className="border-t border-gray-700 pt-2 grid grid-cols-2 gap-x-2 gap-y-1 font-bold text-[10px] text-gray-400">
@@ -76,164 +90,190 @@ const EnemyUnit = React.memo(({ enemy, index, damagePopups }: { enemy: Enemy, in
                 ))}
             </div>
 
-            <StatusBar label="HP" currentValue={enemy.hp} maxValue={enemy.maxHp} colorClass="bg-red-500" />
-            
-        </div>
+            <StatusBar currentValue={enemy.hp} maxValue={enemy.maxHp} colorClass="bg-red-600" label="" />
+        </button>
     );
-}, (prev, next) => {
-    // Only re-render if enemy data changes or if relevant damage popups change
-    return prev.enemy === next.enemy && 
-           prev.index === next.index && 
-           prev.damagePopups === next.damagePopups;
 });
 
-
 export const CombatView: React.FC<CombatViewProps> = ({ storyText, enemies, player, isPlayerTurn, onCombatAction }) => {
-    const [view, setView] = useState<'main' | 'targeting' | 'abilities'>('main');
-    const [actionType, setActionType] = useState<'attack' | 'ability'>('attack');
-    const [selectedAbility, setSelectedAbility] = useState<PlayerAbility | null>(null);
+    const displayedText = useTypewriter(storyText, 20);
     const [damagePopups, setDamagePopups] = useState<DamagePopup[]>([]);
+    const [selectedAbility, setSelectedAbility] = useState<PlayerAbility | null>(null);
+    const [showAbilityMenu, setShowAbilityMenu] = useState(false);
 
-    const displayedText = useTypewriter(storyText, 30);
-    
-    // Create popups without triggering full re-renders of unrelated components if possible
-    const createDamagePopup = useCallback((damage: number, isCrit: boolean, enemyIndex: number) => {
-        const newPopup: DamagePopup = { id: Date.now(), value: damage, isCrit, enemyIndex };
+    const triggerDamagePopup = useCallback((value: number, isCrit: boolean, enemyIndex: number) => {
+        const newPopup = { id: Date.now() + Math.random(), value, isCrit, enemyIndex };
         setDamagePopups(prev => [...prev, newPopup]);
         setTimeout(() => {
             setDamagePopups(prev => prev.filter(p => p.id !== newPopup.id));
-        }, 1000); 
+        }, 1000);
     }, []);
 
-    const handleActionClick = useCallback((type: 'attack' | 'ability', ability: PlayerAbility | null = null) => {
-        const activeEnemiesCount = enemies.filter(e => e.hp > 0).length;
+    const handleTargetClick = (enemyIndex: number) => {
+        if (!isPlayerTurn) return;
         
-        setActionType(type);
-        setSelectedAbility(ability);
+        const target = enemies[enemyIndex];
+        if (!target || target.hp <= 0) return;
 
-        if (type === 'ability' && ability) {
-            const details = PLAYER_ABILITIES[ability];
-            // If it's a self-target ability (Heal, Buff), execute immediately or handle differently
-            if (details.healAmount || details.statusEffect === StatusEffectType.EARTH_ARMOR) {
-                 onCombatAction('ability', {
-                    ability: ability,
-                    targetIndex: 0, // Target index irrelevant for self-cast, but payload needed
-                });
-                return;
-            }
-        }
-        
-        if (activeEnemiesCount === 1) {
-            const targetIndex = enemies.findIndex(e => e.hp > 0);
-            onCombatAction(type, {
-                ability: ability,
-                targetIndex: targetIndex,
-                onDamageDealt: (damage: number, isCrit: boolean) => createDamagePopup(damage, isCrit, targetIndex)
+        if (selectedAbility) {
+            onCombatAction('ability', { 
+                ability: selectedAbility, 
+                targetIndex: enemyIndex,
+                onDamageDealt: (dmg: number, crit: boolean) => triggerDamagePopup(dmg, crit, enemyIndex)
             });
+            setSelectedAbility(null);
+            setShowAbilityMenu(false);
         } else {
-            setView('targeting');
+            // Basic Attack
+            onCombatAction('attack', { 
+                targetIndex: enemyIndex,
+                onDamageDealt: (dmg: number, crit: boolean) => triggerDamagePopup(dmg, crit, enemyIndex)
+            });
         }
-    }, [enemies, onCombatAction, createDamagePopup]);
-    
-    const handleTargetSelect = useCallback((index: number) => {
-        onCombatAction(actionType, {
-            ability: selectedAbility,
-            targetIndex: index,
-            onDamageDealt: (damage: number, isCrit: boolean) => createDamagePopup(damage, isCrit, index)
-        });
-        setView('main');
-        setSelectedAbility(null);
-    }, [actionType, selectedAbility, onCombatAction, createDamagePopup]);
-    
-    const renderAbilities = useMemo(() => {
-        return (
-            <div className="grid grid-cols-1 gap-2 col-span-full max-h-48 overflow-y-auto pr-2">
-                {player.abilities.map((abilityName) => {
-                    const details = PLAYER_ABILITIES[abilityName];
-                    if (!details) return null;
-                    
-                    let canAfford = true;
-                    if (details.resource === 'MP' && (player.mp < details.cost)) canAfford = false;
-                    if (details.resource === 'EP' && (player.ep < details.cost)) canAfford = false;
-                    if (details.resource === 'SP' && (player.sp < details.cost)) canAfford = false;
+    };
 
-                    let colorClass = "bg-gray-700 border-gray-500";
-                    if (details.element === Element.FIRE) colorClass = "bg-orange-700 border-orange-500 hover:bg-orange-600";
-                    else if (details.element === Element.ICE) colorClass = "bg-cyan-700 border-cyan-500 hover:bg-cyan-600";
-                    else if (details.element === Element.EARTH) colorClass = "bg-amber-800 border-amber-600 hover:bg-amber-700";
-                    else if (details.element === Element.LIGHTNING) colorClass = "bg-indigo-700 border-indigo-500 hover:bg-indigo-600";
-                    else if (details.healAmount) colorClass = "bg-green-700 border-green-500 hover:bg-green-600";
+    const handleAbilitySelect = (ability: PlayerAbility) => {
+        const details = PLAYER_ABILITIES[ability];
+        // Check resources
+        if (details.resource === 'MP' && player.mp < details.cost) return;
+        if (details.resource === 'EP' && player.ep < details.cost) return;
+        if (details.resource === 'SP' && player.sp < details.cost) return;
 
-                    return (
-                        <button 
-                            key={abilityName} 
-                            onClick={() => handleActionClick('ability', abilityName)} 
-                            disabled={!canAfford} 
-                            className={`flex items-center justify-between gap-2 text-base md:text-lg text-white font-cinzel font-bold py-3 px-4 rounded-lg border-2 active:scale-95 transition-all ${colorClass} disabled:opacity-50 disabled:grayscale`}
-                        >
-                            <span>{details.name}</span>
-                            <span className="text-xs font-sans font-bold bg-black/30 px-2 py-1 rounded tracking-wide">{details.cost} {details.resource}</span>
-                        </button>
-                    );
-                })}
-            </div>
-        );
-    }, [player.abilities, player.mp, player.ep, player.sp, handleActionClick]);
+        // If self-cast/heal, execute immediately if damageMultiplier is 0
+        if (details.damageMultiplier === 0) {
+             // Pure buff/heal, safe to pass targetIndex 0 or ignore in reducer if logic supports it
+             onCombatAction('ability', { ability, targetIndex: 0 }); 
+             setShowAbilityMenu(false);
+             return;
+        }
+        
+        setSelectedAbility(ability);
+        // Now wait for target selection
+    };
 
     return (
-        <div className="flex flex-col h-full">
-            {/* Scrollable Content Area (Enemies + Text) */}
-            <div className="flex-1 min-h-0 overflow-y-auto pr-2 pb-2 flex flex-col gap-4">
-                {/* Narrative Area */}
-                <div className="min-h-[3rem] shrink-0">
-                    <p className={`transition-opacity duration-300 text-lg md:text-xl font-serif leading-relaxed ${!isPlayerTurn ? 'opacity-50' : ''}`}>{displayedText}</p>
-                </div>
-                
-                {/* Enemies Area */}
-                <div className="mb-2 p-1">
-                    <div className="flex flex-wrap items-center justify-center gap-4">
-                        {enemies.map((enemy, index) => enemy.hp > 0 && (
-                            <EnemyUnit 
-                                key={index} 
-                                enemy={enemy} 
-                                index={index} 
-                                damagePopups={damagePopups.filter(p => p.enemyIndex === index)} 
-                            />
-                        ))}
-                    </div>
-                </div>
+        <div className="flex flex-col h-full relative">
+            {/* Story Text */}
+            <div className="flex-1 overflow-y-auto mb-4 p-2 bg-black/20 rounded-lg">
+                <p className="text-lg md:text-xl font-serif leading-relaxed text-gray-200">{displayedText}</p>
             </div>
 
-            {/* Fixed Bottom Actions */}
-            <div className="flex-shrink-0 pt-2 border-t border-gray-700/50 mt-auto">
-                <div className="grid grid-cols-2 gap-2 md:gap-3">
-                     {isPlayerTurn && view === 'main' && (
-                        <>
-                            <button onClick={() => handleActionClick('attack')} className="flex items-center justify-center gap-2 text-base md:text-lg bg-red-800 hover:bg-red-700 text-white font-cinzel font-bold py-3 px-2 rounded-lg border-2 border-red-600 active:scale-95 transition-all shadow-md"><SwordIcon/>Attack</button>
-                            <button onClick={() => setView('abilities')} disabled={player.abilities.length === 0} className="flex items-center justify-center gap-2 text-base md:text-lg bg-purple-800 hover:bg-purple-700 disabled:bg-gray-700 text-white font-cinzel font-bold py-3 px-2 rounded-lg border-2 border-purple-600 active:scale-95 transition-all shadow-md"><StarIcon />Ability</button>
-                            <button onClick={() => onCombatAction('defend')} className="flex items-center justify-center gap-2 text-base md:text-lg bg-blue-800 hover:bg-blue-700 text-white font-cinzel font-bold py-3 px-2 rounded-lg border-2 border-blue-600 active:scale-95 transition-all shadow-md"><ShieldIcon/>Defend</button>
-                            <button onClick={() => onCombatAction('flee')} className="flex items-center justify-center gap-2 text-base md:text-lg bg-green-800 hover:bg-green-700 text-white font-cinzel font-bold py-3 px-2 rounded-lg border-2 border-green-600 active:scale-95 transition-all shadow-md"><RunIcon/>Flee</button>
-                        </>
-                     )}
-                     {isPlayerTurn && view === 'targeting' && (
-                        <div className="col-span-full flex flex-col gap-2 animate-fade-in-short max-h-32 md:max-h-48 overflow-y-auto pr-2">
-                            <p className="text-center text-sm uppercase tracking-wide text-gray-400 font-bold">Select Target</p>
-                            {enemies.map((enemy, index) => enemy.hp > 0 && (
-                                <button key={index} onClick={() => handleTargetSelect(index)} className="w-full text-lg bg-red-800 hover:bg-red-700 text-white font-cinzel font-bold py-3 px-3 rounded-lg border-2 border-red-600">{enemy.name}</button>
-                            ))}
-                            <button onClick={() => setView('main')} className="w-full text-lg bg-gray-600 hover:bg-gray-500 text-white font-cinzel font-bold py-3 px-3 rounded-lg border-2 border-gray-400">Cancel</button>
-                        </div>
-                    )}
-                    {isPlayerTurn && view === 'abilities' && (
-                        <div className="col-span-full flex flex-col gap-2 animate-fade-in-short">
-                            <p className="text-center text-sm uppercase tracking-wide text-gray-400 font-bold">Select Ability</p>
-                            {renderAbilities}
-                            <button onClick={() => setView('main')} className="w-full text-lg bg-gray-600 hover:bg-gray-500 text-white font-cinzel font-bold py-3 px-3 rounded-lg border-2 border-gray-400 mt-2">Back</button>
-                        </div>
-                    )}
+            {/* Enemies Grid */}
+            <div className="flex flex-wrap justify-center gap-4 mb-20 animate-fade-in py-4">
+                {enemies.map((enemy, index) => {
+                    if (enemy.hp <= 0) return null; // Hide dead enemies
+                    return (
+                        <EnemyUnit 
+                            key={index} 
+                            index={index}
+                            enemy={enemy} 
+                            damagePopups={damagePopups.filter(p => p.enemyIndex === index)}
+                            onTarget={handleTargetClick}
+                        />
+                    );
+                })}
+                 {enemies.every(e => e.hp <= 0) && (
+                    <div className="text-yellow-400 font-bold text-2xl animate-bounce">VICTORY!</div>
+                )}
+            </div>
+
+            {/* Ability Menu Overlay */}
+            {showAbilityMenu && (
+                <div className="absolute bottom-20 left-0 right-0 bg-gray-900/95 border-t-2 border-purple-500 p-4 rounded-t-xl z-20 animate-slide-up max-h-[50vh] overflow-y-auto shadow-2xl">
+                    <div className="flex justify-between items-center mb-3">
+                        <h3 className="font-cinzel font-bold text-purple-300 text-lg">Select Ability</h3>
+                        <button onClick={() => { setShowAbilityMenu(false); setSelectedAbility(null); }} className="text-gray-400 hover:text-white font-bold px-2">✕</button>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        {player.abilities.map(abilityName => {
+                            const info = PLAYER_ABILITIES[abilityName];
+                            const canAfford = 
+                                (info.resource === 'MP' && player.mp >= info.cost) ||
+                                (info.resource === 'EP' && player.ep >= info.cost) ||
+                                (info.resource === 'SP' && player.sp >= info.cost);
+                            
+                            return (
+                                <button
+                                    key={abilityName}
+                                    onClick={() => handleAbilitySelect(abilityName)}
+                                    disabled={!canAfford}
+                                    className={`text-left p-3 rounded border transition-all flex flex-col ${
+                                        selectedAbility === abilityName 
+                                        ? 'bg-purple-800 border-yellow-400 ring-2 ring-yellow-400/50' 
+                                        : canAfford 
+                                            ? 'bg-gray-800 border-gray-600 hover:bg-gray-700' 
+                                            : 'bg-gray-900 border-gray-800 opacity-50 cursor-not-allowed'
+                                    }`}
+                                >
+                                    <div className="flex justify-between w-full">
+                                        <span className="font-bold text-white">{info.name}</span>
+                                        <span className={`text-xs font-bold ${canAfford ? 'text-blue-300' : 'text-red-400'}`}>{info.cost} {info.resource}</span>
+                                    </div>
+                                    <span className="text-xs text-gray-400 italic">{info.description}</span>
+                                </button>
+                            );
+                        })}
+                    </div>
                 </div>
+            )}
+
+            {/* Combat Actions Bar */}
+            <div className="absolute bottom-0 left-0 right-0 p-2 bg-gray-900 border-t border-gray-700 flex gap-2 justify-center z-10">
+                {isPlayerTurn ? (
+                    <>
+                         <div className={`transition-all duration-300 ${selectedAbility ? 'w-full' : 'w-auto flex gap-2'}`}>
+                            {selectedAbility ? (
+                                <div className="flex items-center justify-between w-full bg-purple-900/50 px-4 py-2 rounded border border-purple-500 animate-pulse">
+                                    <span className="text-white font-bold">Select Target for {selectedAbility}...</span>
+                                    <button 
+                                        onClick={() => setSelectedAbility(null)}
+                                        className="bg-gray-700 hover:bg-gray-600 text-white px-3 py-1 rounded text-sm font-bold"
+                                    >
+                                        Cancel
+                                    </button>
+                                </div>
+                            ) : (
+                                <>
+                                    <div 
+                                        className="bg-red-700 text-white p-3 rounded-lg border-2 border-red-500 font-cinzel font-bold flex-1 sm:flex-none sm:w-32 active:scale-95 shadow-lg relative group flex flex-col items-center justify-center cursor-default opacity-80"
+                                    >
+                                        <SwordIcon className="w-6 h-6 mx-auto mb-1"/>
+                                        <span className="text-xs">Tap Enemy</span>
+                                    </div>
+
+                                    <button 
+                                        onClick={() => setShowAbilityMenu(!showAbilityMenu)}
+                                        className={`bg-purple-700 hover:bg-purple-600 text-white p-3 rounded-lg border-2 border-purple-500 font-cinzel font-bold flex-1 sm:flex-none sm:w-32 active:scale-95 shadow-lg ${showAbilityMenu ? 'ring-2 ring-yellow-400' : ''}`}
+                                    >
+                                        <StarIcon className="w-6 h-6 mx-auto mb-1"/>
+                                        <span className="text-xs">Skills</span>
+                                    </button>
+
+                                    <button 
+                                        onClick={() => onCombatAction('defend')}
+                                        className="bg-blue-700 hover:bg-blue-600 text-white p-3 rounded-lg border-2 border-blue-500 font-cinzel font-bold flex-1 sm:flex-none sm:w-32 active:scale-95 shadow-lg"
+                                    >
+                                        <ShieldIcon className="w-6 h-6 mx-auto mb-1"/>
+                                        <span className="text-xs">Defend</span>
+                                    </button>
+
+                                    <button 
+                                        onClick={() => onCombatAction('flee')}
+                                        className="bg-gray-600 hover:bg-gray-500 text-white p-3 rounded-lg border-2 border-gray-400 font-cinzel font-bold flex-1 sm:flex-none sm:w-24 active:scale-95 shadow-lg"
+                                    >
+                                        <RunIcon className="w-6 h-6 mx-auto mb-1"/>
+                                        <span className="text-xs">Flee</span>
+                                    </button>
+                                </>
+                            )}
+                         </div>
+                    </>
+                ) : (
+                    <div className="w-full text-center py-3 text-gray-400 italic bg-gray-800 rounded border border-gray-700 animate-pulse">
+                        Opponent's Turn...
+                    </div>
+                )}
             </div>
         </div>
     );
 };
-    

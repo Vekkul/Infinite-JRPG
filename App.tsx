@@ -1,4 +1,5 @@
 
+
 import React, { useState } from 'react';
 import { GameState, Enemy, SocialEncounter, EquipmentSlot, AppSettings, EventPopup } from './types';
 import { Inventory } from './components/Inventory';
@@ -173,6 +174,7 @@ const App: React.FC = () => {
     };
 
     const isScreenState = gameState === GameState.START_SCREEN || gameState === GameState.LOADING || gameState === GameState.GAME_OVER || gameState === GameState.CHARACTER_CREATION;
+    const isLowHealth = player && player.hp < player.maxHp * 0.3 && gameState !== GameState.GAME_OVER && !isScreenState;
 
     const ActionButtons = React.memo(() => (
         <div className="flex items-center gap-2 w-full max-w-4xl mx-auto overflow-x-auto whitespace-nowrap pb-1 no-scrollbar">
@@ -228,6 +230,7 @@ const App: React.FC = () => {
             backgroundImage: `radial-gradient(circle, rgba(31, 41, 55, 0.9) 0%, rgba(17, 24, 39, 1) 70%)`,
         }}>
             {settings.crtEnabled && <div className="crt-effect" />}
+            <div className={`low-health-vignette ${isLowHealth ? 'active' : ''}`}></div>
             
             <Inventory 
                 isOpen={isInventoryOpen}

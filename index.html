@@ -119,6 +119,12 @@
         color: #dcfce7;
         text-shadow: 1px 1px 1px #14532d;
       }
+      .event-popup.damage {
+        background-color: rgba(220, 38, 38, 0.9);
+        color: #fee2e2;
+        text-shadow: 1px 1px 1px #7f1d1d;
+        font-family: 'Cinzel', serif;
+      }
       .event-popup.info {
         font-family: 'Cinzel', serif;
         font-size: 1.1rem;
@@ -140,6 +146,17 @@
           15% { opacity: 1; transform: translateY(0) scale(1.1); }
           85% { opacity: 1; transform: translateY(-40px) scale(1); }
           100% { opacity: 0; transform: translateY(-60px) scale(0.9); }
+      }
+      
+      .shake {
+        animation: shake 0.4s cubic-bezier(.36,.07,.19,.97) both;
+      }
+
+      @keyframes shake {
+        10%, 90% { transform: translate3d(-1px, 0, 0); }
+        20%, 80% { transform: translate3d(2px, 0, 0); }
+        30%, 50%, 70% { transform: translate3d(-4px, 0, 0); }
+        40%, 60% { transform: translate3d(4px, 0, 0); }
       }
 
       /* CRT Effect */
@@ -193,6 +210,26 @@
         90% { opacity: 0.03352 }
         95% { opacity: 0.0296 }
         100% { opacity: 0.04781 }
+      }
+      
+      .low-health-vignette {
+        pointer-events: none;
+        position: fixed;
+        inset: 0;
+        z-index: 40;
+        transition: opacity 1s ease-in-out;
+        box-shadow: inset 0 0 100px rgba(255, 0, 0, 0.4);
+        opacity: 0;
+      }
+      .low-health-vignette.active {
+        opacity: 1;
+        animation: pulse-red 2s infinite;
+      }
+      
+      @keyframes pulse-red {
+          0% { box-shadow: inset 0 0 80px rgba(255, 0, 0, 0.3); }
+          50% { box-shadow: inset 0 0 150px rgba(255, 0, 0, 0.6); }
+          100% { box-shadow: inset 0 0 80px rgba(255, 0, 0, 0.3); }
       }
 
       /* Safe area spacing for modern phones */

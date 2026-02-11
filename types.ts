@@ -1,4 +1,5 @@
 
+
 export enum GameState {
   LOADING = 'LOADING',
   START_SCREEN = 'START_SCREEN',
@@ -245,7 +246,7 @@ export interface AppSettings {
 export interface EventPopup {
   id: number;
   text: string;
-  type: 'info' | 'heal' | 'item' | 'xp' | 'quest';
+  type: 'info' | 'heal' | 'item' | 'xp' | 'quest' | 'damage';
 }
 
 // --- Reducer State & Actions ---

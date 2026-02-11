@@ -1,4 +1,5 @@
 
+
 import { GoogleGenAI, Type, Modality, GenerateContentResponse } from "@google/genai";
 import { Player, GameAction, Item, ItemType, EnemyAbility, SocialEncounter, RewardType, AIPersonality, MapLocation, WorldData, Element, Enemy, SocialChoice, EquipmentSlot, Quest, QuestUpdate } from '../types';
 import { assetService } from './assetService';
@@ -47,6 +48,18 @@ const itemSchema = {
         traits: { type: Type.ARRAY, items: { type: Type.STRING }, description: "Tags."}
     },
     required: ["name", "description", "type", "value", "stackLimit"]
+};
+
+const playerStateChangeSchema = {
+    type: Type.OBJECT,
+    properties: {
+        hp: { type: Type.INTEGER, description: "Change in HP (negative for damage, positive for heal)." },
+        mp: { type: Type.INTEGER, description: "Change in MP." },
+        sp: { type: Type.INTEGER, description: "Change in SP." },
+        ep: { type: Type.INTEGER, description: "Change in EP." },
+        xp: { type: Type.INTEGER, description: "XP gained." }
+    },
+    description: "Optional immediate physical effect on player (e.g. traps, resting, fountains)."
 };
 
 const sceneSchema = {
@@ -122,7 +135,8 @@ const exploreResultSchema = {
             description: "Choices if nextSceneType is 'SOCIAL'.",
             items: socialChoiceSchema
         },
-        questUpdate: { ...questUpdateSchema, description: "Optional quest update." }
+        questUpdate: { ...questUpdateSchema, description: "Optional quest update." },
+        playerStateChange: playerStateChangeSchema
     },
     required: ["description", "nextSceneType"]
 };
@@ -209,7 +223,7 @@ const callWithRetry = async <T>(
 
 // --- Helper for Prompt Construction ---
 const getContextString = (player: Player) => {
-    let context = `Context: Level ${player.level} ${player.className}.`;
+    let context = `Context: Level ${player.level} ${player.className}. HP: ${player.hp}/${player.maxHp}.`;
     if (player.journal.quests.length > 0) {
         // Only show active quests to save tokens
         const activeQuests = player.journal.quests
@@ -235,12 +249,29 @@ const getContextString = (player: Player) => {
     return context;
 };
 
-export const generateExploreResult = async (player: Player, action: GameAction): Promise<{ description: string; nextSceneType: 'EXPLORATION' | 'SOCIAL' | 'COMBAT'; localActions?: GameAction[]; foundItem?: Omit<Item, 'quantity'>; socialChoices?: SocialChoice[]; questUpdate?: QuestUpdate; isFallback?: boolean; }> => {
+export interface ExploreResult {
+    description: string;
+    nextSceneType: 'EXPLORATION' | 'SOCIAL' | 'COMBAT';
+    localActions?: GameAction[];
+    foundItem?: Omit<Item, 'quantity'>;
+    socialChoices?: SocialChoice[];
+    questUpdate?: QuestUpdate;
+    playerStateChange?: {
+        hp?: number;
+        mp?: number;
+        sp?: number;
+        ep?: number;
+        xp?: number;
+    };
+    isFallback?: boolean;
+}
+
+export const generateExploreResult = async (player: Player, action: GameAction): Promise<ExploreResult> => {
     try {
         const context = getContextString(player);
         const response = await callWithRetry<GenerateContentResponse>(() => getAi().models.generateContent({
             model: TEXT_MODEL,
-            contents: `${context} Action: "${action.label}". Generate result. If EXPLORATION, describe scene. If SOCIAL/COMBAT, lead-in text. Update quests if applicable.`,
+            contents: `${context} Action: "${action.label}". Generate result. If EXPLORATION, describe scene. If SOCIAL/COMBAT, lead-in text. You can injure/heal player via playerStateChange (e.g. traps, resting). Update quests if applicable.`,
             config: {
                 systemInstruction: SYSTEM_INSTRUCTION,
                 responseMimeType: "application/json",
@@ -258,6 +289,7 @@ export const generateExploreResult = async (player: Player, action: GameAction):
             foundItem: data.foundItem,
             socialChoices: data.socialChoices,
             questUpdate: data.questUpdate,
+            playerStateChange: data.playerStateChange
         };
 
     } catch (error) {
@@ -271,12 +303,12 @@ export const generateExploreResult = async (player: Player, action: GameAction):
     }
 };
 
-export const generateImproviseResult = async (player: Player, input: string): Promise<{ description: string; nextSceneType: 'EXPLORATION' | 'SOCIAL' | 'COMBAT'; localActions?: GameAction[]; foundItem?: Omit<Item, 'quantity'>; socialChoices?: SocialChoice[]; questUpdate?: QuestUpdate; isFallback?: boolean; }> => {
+export const generateImproviseResult = async (player: Player, input: string): Promise<ExploreResult> => {
     try {
         const context = getContextString(player);
         const response = await callWithRetry<GenerateContentResponse>(() => getAi().models.generateContent({
             model: TEXT_MODEL,
-            contents: `${context} Player Input: "${input}". Resolve action. If skill check, assume fair roll. Transition to combat/social if appropriate.`,
+            contents: `${context} Player Input: "${input}". Resolve action. If skill check, assume fair roll. Transition to combat/social if appropriate. Use playerStateChange for consequences (damage/healing).`,
             config: {
                 systemInstruction: SYSTEM_INSTRUCTION,
                 responseMimeType: "application/json",
@@ -294,6 +326,7 @@ export const generateImproviseResult = async (player: Player, input: string): Pr
             foundItem: data.foundItem,
             socialChoices: data.socialChoices,
             questUpdate: data.questUpdate,
+            playerStateChange: data.playerStateChange
         };
 
     } catch (error) {

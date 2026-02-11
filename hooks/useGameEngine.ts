@@ -1,7 +1,8 @@
 
+
 import { useReducer, useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { GameState, Item, ItemType, SaveData, EnemyAbility, SocialChoice, AIPersonality, PlayerAbility, Element, StatusEffectType, StatusEffect, GameAction, Enemy, SocialEncounter, EquipmentSlot, EventPopup, Recipe, Attributes } from '../types';
-import { generateScene, generateEncounter, generateWorldData, generateExploreResult, generateImproviseResult } from '../services/geminiService';
+import { generateScene, generateEncounter, generateWorldData, generateExploreResult, generateImproviseResult, ExploreResult } from '../services/geminiService';
 import { saveGameToStorage, loadGameFromStorage, checkSaveExists } from '../services/storageService';
 import { reducer } from '../state/reducer';
 import { initialState } from '../state/initialState';
@@ -76,6 +77,46 @@ export const useGameEngine = () => {
         createEventPopup(`Found: ${itemDef.name}!`, 'item');
         dispatch({ type: 'ADD_ITEM_TO_INVENTORY', payload: itemDef });
     }, [appendToLog, createEventPopup]);
+
+    const processStateChange = useCallback((delta: NonNullable<ExploreResult['playerStateChange']>) => {
+        const updates: Partial<typeof player> = {};
+        
+        if (delta.hp) {
+            updates.hp = Math.min(player.maxHp, Math.max(0, player.hp + delta.hp));
+            if (delta.hp > 0) createEventPopup(`+${delta.hp} HP`, 'heal');
+            else createEventPopup(`${delta.hp} HP`, 'damage');
+        }
+        if (delta.mp) {
+            updates.mp = Math.min(player.maxMp, Math.max(0, player.mp + delta.mp));
+            if (delta.mp > 0) createEventPopup(`+${delta.mp} MP`, 'heal');
+        }
+        if (delta.sp) {
+            updates.sp = Math.min(player.maxSp, Math.max(0, player.sp + delta.sp));
+            if (delta.sp > 0) createEventPopup(`+${delta.sp} SP`, 'heal');
+        }
+        if (delta.ep) {
+            updates.ep = Math.min(player.maxEp, Math.max(0, player.ep + delta.ep));
+            if (delta.ep > 0) createEventPopup(`+${delta.ep} EP`, 'heal');
+        }
+        
+        if (Object.keys(updates).length > 0) {
+            dispatch({ type: 'UPDATE_PLAYER', payload: updates });
+        }
+        
+        if (delta.xp) {
+            // XP logic handled via specialized reducer or simple update? 
+            // Better to trigger a pseudo-victory process or just manual add?
+            // Manual add + check level up is simpler here or dispatch 'PROCESS_COMBAT_VICTORY' with 0 loot?
+            // Let's do manual logic to keep it clean.
+            // Actually, we can reuse the generic 'UPDATE_PLAYER' but it doesn't handle LevelUp automatically in reducer unless we add logic there.
+            // 'PROCESS_COMBAT_VICTORY' handles level up.
+             dispatch({ 
+                type: 'PROCESS_COMBAT_VICTORY', 
+                payload: { xpGained: delta.xp, loot: [], regen: {hp:0, mp:0, ep:0, sp:0} } // Regen 0 because we handled hp/mp above
+            });
+            createEventPopup(`+${delta.xp} XP`, 'xp');
+        }
+    }, [player, createEventPopup]);
 
     // --- Core Game Actions ---
 
@@ -182,6 +223,10 @@ export const useGameEngine = () => {
 
         appendToLog(result.description);
         
+        if (result.playerStateChange) {
+            processStateChange(result.playerStateChange);
+        }
+        
         if (result.questUpdate) {
              const quest = player.journal.quests.find(q => q.id === result.questUpdate?.questId);
              if (quest) {
@@ -225,7 +270,7 @@ export const useGameEngine = () => {
             dispatch({ type: 'SET_GAME_STATE', payload: GameState.COMBAT });
             dispatch({ type: 'SET_PLAYER_TURN', payload: true });
         }
-    }, [player, appendToLog, handleFoundItem, handleFallback, actions, createEventPopup]);
+    }, [player, appendToLog, handleFoundItem, handleFallback, actions, createEventPopup, processStateChange]);
 
     const handleAction = useCallback(async (action: GameAction) => {
         const opId = ++operationIdRef.current;
@@ -261,6 +306,10 @@ export const useGameEngine = () => {
             if (result.isFallback) handleFallback();
     
             appendToLog(result.description);
+
+            if (result.playerStateChange) {
+                processStateChange(result.playerStateChange);
+            }
             
             if (result.questUpdate) {
                 const quest = player.journal.quests.find(q => q.id === result.questUpdate?.questId);
@@ -308,7 +357,7 @@ export const useGameEngine = () => {
                 dispatch({ type: 'SET_PLAYER_TURN', payload: true });
             }
         }
-    }, [player, appendToLog, handleFoundItem, worldData, playerLocationId, handleFallback, actions, createEventPopup]);
+    }, [player, appendToLog, handleFoundItem, worldData, playerLocationId, handleFallback, actions, createEventPopup, processStateChange]);
 
     // Handle Movement & Location Changes
     useEffect(() => {
@@ -688,6 +737,7 @@ export const useGameEngine = () => {
                                 dispatch({ type: 'UPDATE_PLAYER', payload: { hp: currentHp } });
                                 dispatch({type: 'ENEMY_ACTION_DRAIN_LIFE', payload: { enemyIndex: i, damage: finalDamageDrain }})
                                 appendToLog(`${enemy.name} drains ${finalDamageDrain} HP from you!`);
+                                createEventPopup(`-${finalDamageDrain} HP`, 'damage');
                                 break;
                             case EnemyAbility.MULTI_ATTACK:
                                 for (let j=0; j<2; j++) {
@@ -700,6 +750,7 @@ export const useGameEngine = () => {
                                         currentHp = Math.max(0, currentHp - playerDamageTakenMulti);
                                         dispatch({ type: 'UPDATE_PLAYER', payload: { hp: currentHp } });
                                         appendToLog(`${enemy.name} strikes! You take ${playerDamageTakenMulti} damage.`);
+                                        createEventPopup(`-${playerDamageTakenMulti} HP`, 'damage');
                                     }
                                 }
                                 break;
@@ -731,6 +782,7 @@ export const useGameEngine = () => {
                         currentHp = newPlayerHp;
                         dispatch({ type: 'UPDATE_PLAYER', payload: { hp: newPlayerHp } });
                         appendToLog(`${enemy.name} attacks! You take ${playerDamageTaken} damage. ${isCrit ? 'CRITICAL!' : ''}`);
+                        createEventPopup(`-${playerDamageTaken} HP`, 'damage');
     
                         if (enemy.element && enemy.element !== Element.NONE && Math.random() < ENEMY_STATUS_CHANCE[enemy.element]) {
                             const effectType = ENEMY_STATUS_MAP[enemy.element];
